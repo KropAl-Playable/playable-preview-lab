@@ -1,30 +1,36 @@
-import { DEVICES } from './devices.js';
+import { DEVICE_PROFILES } from './devices.js';
 import { injectPreviewBridge } from './bridge.js';
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   fileInput: $('#fileInput'), reload: $('#reloadButton'), dropZone: $('#dropZone'), stage: $('#previewStage'),
-  singleMode: $('#singleModeButton'), gridMode: $('#gridModeButton'), device: $('#deviceSelect'),
-  portrait: $('#portraitButton'), landscape: $('#landscapeButton'), sync: $('#syncInputToggle'),
-  mute: $('#muteButton'), endcard: $('#endcardButton'), cta: $('#ctaButton'),
-  sourceInfo: $('#sourceInfo'), sourceName: $('#sourceName'), sourceSize: $('#sourceSize'), bridgeStatus: $('#bridgeStatus'),
-  template: $('#deviceTemplate'),
+  device: $('#deviceSelect'), previewDpr: $('#previewDprButton'), deviceDpr: $('#deviceDprButton'),
+  sync: $('#syncInputToggle'), clearFocus: $('#clearFocusButton'), mute: $('#muteButton'),
+  endcard: $('#endcardButton'), cta: $('#ctaButton'), sourceInfo: $('#sourceInfo'),
+  sourceName: $('#sourceName'), sourceSize: $('#sourceSize'), profileInfo: $('#profileInfo'),
+  bridgeStatus: $('#bridgeStatus'), template: $('#deviceTemplate'),
 };
 
 const state = {
   sourceHtml: '', fileName: '', fileSize: 0,
-  view: 'single', orientation: 'portrait', selectedDeviceId: 'iphone-13',
-  muted: false, syncInput: false, audioMasterId: null,
-  frames: new Map(), renderToken: 0,
+  selectedProfileId: 'iphone-13', dprMode: 'preview',
+  muted: false, syncInput: true, audioMasterId: null, driverId: null, focusedId: null,
+  sessions: new Map(),
 };
 
-for (const device of DEVICES) {
+for (const profile of DEVICE_PROFILES) {
   const option = document.createElement('option');
-  option.value = device.id;
-  option.textContent = `${device.kind === 'tablet' ? '▰' : '▯'} ${device.name} — ${device.width}×${device.height}`;
+  option.value = profile.id;
+  const glyph = profile.kind === 'tablet' ? '▰' : profile.kind === 'foldable' ? '◫' : '▯';
+  option.textContent = `${glyph} ${profile.name} — ${profile.views.length} views`;
   elements.device.append(option);
 }
-elements.device.value = state.selectedDeviceId;
+elements.device.value = state.selectedProfileId;
+elements.sync.checked = state.syncInput;
+
+function currentProfile() {
+  return DEVICE_PROFILES.find((profile) => profile.id === state.selectedProfileId) || DEVICE_PROFILES[0];
+}
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -32,225 +38,238 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function oriented(device, orientation) {
-  if (orientation === 'portrait') return { ...device };
-  return { ...device, width: device.height, height: device.width };
-}
-
-function frameKey(deviceId, orientation) {
-  return `${deviceId}:${orientation}`;
-}
-
-function setActive(buttons, active) {
-  buttons.forEach((button) => button.classList.toggle('active', button === active));
-}
-
 function previewBaseUrl() {
   try { return new URL('./', window.location.href).href; }
   catch (_) { return window.location.href; }
 }
 
-function createPlayableDocument(device) {
-  return injectPreviewBridge(state.sourceHtml, device, { baseHref: previewBaseUrl() });
-}
-
-function scaleForGridPair(device) {
-  const stageWidth = Math.min(Math.max(window.innerWidth - 40, 360), 1680);
-  const columnWidth = (stageWidth - 28) / 2;
-  const logicalMaxWidth = Math.max(device.width, device.height);
-  const cap = device.kind === 'tablet' ? 0.48 : 0.56;
-  return Math.max(0.12, Math.min(cap, (columnWidth - 34) / logicalMaxWidth));
-}
-
-function ensureAudioMaster(validKeys) {
-  if (!validKeys.length) {
-    state.audioMasterId = null;
-    return;
-  }
-  if (!state.audioMasterId || !validKeys.includes(state.audioMasterId)) {
-    state.audioMasterId = validKeys[0];
-  }
-}
-
-function createDeviceCard(rawDevice, orientation, scale) {
-  const device = oriented(rawDevice, orientation);
-  const key = frameKey(rawDevice.id, orientation);
-  const fragment = elements.template.content.cloneNode(true);
-  const card = fragment.querySelector('.device-card');
-  const shell = fragment.querySelector('.device-shell');
-  const frame = fragment.querySelector('.device-frame');
-  const status = fragment.querySelector('.frame-status');
-  const banner = fragment.querySelector('.cta-banner');
-  const masterButton = fragment.querySelector('.audio-master-button');
-
-  card.dataset.deviceId = rawDevice.id;
-  card.dataset.kind = rawDevice.kind;
-  card.dataset.orientation = orientation;
-  card.dataset.frameKey = key;
-  fragment.querySelector('.device-name').textContent = rawDevice.name;
-  fragment.querySelector('.device-metrics').textContent = `${device.width}×${device.height} · DPR ${rawDevice.dpr}`;
-
-  shell.style.setProperty('--frame-w', `${device.width}px`);
-  shell.style.setProperty('--frame-h', `${device.height}px`);
-  if (scale != null) shell.style.setProperty('--scale', String(scale));
-  card.style.setProperty('--visual-width', `${device.width * (scale ?? 0.7) + 20}px`);
-
-  frame.dataset.frameKey = key;
-  masterButton.classList.toggle('active', key === state.audioMasterId);
-  masterButton.addEventListener('click', () => {
-    state.audioMasterId = key;
-    document.querySelectorAll('.audio-master-button').forEach((button) => button.classList.remove('active'));
-    masterButton.classList.add('active');
-    updateFrameAudio();
-  });
-
-  const entry = {
-    key, frame, status, banner, device: rawDevice, orientation,
-    sourceDocument: createPlayableDocument(device),
-    ready: false, hasCgbBridge: false, error: null,
-  };
-  state.frames.set(key, entry);
-  return { card, entry };
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function startFrame(entry, renderToken) {
-  if (renderToken !== state.renderToken || !entry.frame.isConnected) return;
-  entry.status.textContent = 'Starting playable…';
-  await new Promise((resolve) => {
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    entry.frame.addEventListener('load', () => {
-      if (!entry.ready && !entry.error) entry.status.textContent = 'Document loaded · waiting for bridge…';
-      updateFrameAudio();
-      done();
-    }, { once: true });
-    entry.frame.srcdoc = entry.sourceDocument;
-    setTimeout(done, 2500);
-  });
-}
-
-async function startGridQueue(entries, renderToken) {
-  let cursor = 0;
-  async function worker() {
-    while (cursor < entries.length && renderToken === state.renderToken) {
-      const entry = entries[cursor++];
-      await startFrame(entry, renderToken);
-      await wait(100);
-    }
-  }
-  await Promise.all([worker(), worker()]);
-}
-
-function renderSingle(renderToken) {
-  const rawDevice = DEVICES.find((device) => device.id === state.selectedDeviceId) || DEVICES[0];
-  if (!rawDevice) return;
-  const key = frameKey(rawDevice.id, state.orientation);
-  ensureAudioMaster([key]);
-  const { card, entry } = createDeviceCard(rawDevice, state.orientation, null);
-  elements.stage.append(card);
-  void startFrame(entry, renderToken);
-}
-
-function renderGrid(renderToken) {
-  const keys = DEVICES.flatMap((device) => [frameKey(device.id, 'portrait'), frameKey(device.id, 'landscape')]);
-  ensureAudioMaster(keys);
-
-  const headings = document.createElement('div');
-  headings.className = 'grid-orientation-headings';
-  headings.innerHTML = '<div>Portrait</div><div>Landscape</div>';
-  elements.stage.append(headings);
-
-  const entries = [];
-  for (const rawDevice of DEVICES) {
-    const scale = scaleForGridPair(rawDevice);
-    const row = document.createElement('section');
-    row.className = 'grid-pair-row';
-    row.dataset.kind = rawDevice.kind;
-    row.dataset.deviceId = rawDevice.id;
-
-    const portrait = createDeviceCard(rawDevice, 'portrait', scale);
-    const portraitCell = document.createElement('div');
-    portraitCell.className = 'orientation-cell portrait-cell';
-    portraitCell.append(portrait.card);
-
-    const landscape = createDeviceCard(rawDevice, 'landscape', scale);
-    const landscapeCell = document.createElement('div');
-    landscapeCell.className = 'orientation-cell landscape-cell';
-    landscapeCell.append(landscape.card);
-
-    row.append(portraitCell, landscapeCell);
-    elements.stage.append(row);
-    entries.push(portrait.entry, landscape.entry);
-  }
-
-  void startGridQueue(entries, renderToken);
-}
-
-function render() {
-  const renderToken = ++state.renderToken;
-  state.frames.clear();
-  elements.stage.innerHTML = '';
-  if (!state.sourceHtml) return;
-
-  elements.stage.className = `preview-stage ${state.view}-view`;
-  if (state.view === 'single') renderSingle(renderToken);
-  else renderGrid(renderToken);
-  updateFrameAudio();
-  updateGlobalBridgeStatus();
+function effectiveView(view) {
+  return { ...view, dpr: state.dprMode === 'device' ? view.dpr : 1 };
 }
 
 function postFrame(frame, message) {
   frame.contentWindow?.postMessage({ source: 'cgb-preview-host', ...message }, '*');
 }
 
-function updateFrameAudio() {
-  for (const [id, entry] of state.frames) {
-    const audible = state.view === 'single' || id === state.audioMasterId;
-    postFrame(entry.frame, { type: 'SET_MUTE', muted: state.muted, audible });
+function setActive(buttons, active) {
+  buttons.forEach((button) => button.classList.toggle('active', button === active));
+}
+
+function updateProfileInfo() {
+  const profile = currentProfile();
+  if (!profile) return;
+  const parts = [`${profile.views.length} live view${profile.views.length === 1 ? '' : 's'}`];
+  if (profile.note) parts.push(profile.note);
+  elements.profileInfo.textContent = parts.join(' · ');
+}
+
+function updateCardMeta(session) {
+  const view = session.view;
+  session.name.textContent = view.label;
+  const actualDpr = state.dprMode === 'device' ? view.dpr : 1;
+  session.metrics.textContent = `${view.width}×${view.height} · DPR ${actualDpr}${state.dprMode === 'preview' && view.dpr !== 1 ? ` (device ${view.dpr})` : ''}`;
+  session.card.dataset.viewId = view.id;
+  session.card.dataset.orientation = view.orientation || '';
+  session.frame.dataset.viewId = view.id;
+}
+
+function applyViewport(session) {
+  const view = effectiveView(session.view);
+  session.shell.style.setProperty('--frame-w', `${view.width}px`);
+  session.shell.style.setProperty('--frame-h', `${view.height}px`);
+  session.frame.style.width = `${view.width}px`;
+  session.frame.style.height = `${view.height}px`;
+  updateCardMeta(session);
+  postFrame(session.frame, { type: 'SET_VIEWPORT', device: view });
+}
+
+function createSession(view) {
+  const fragment = elements.template.content.cloneNode(true);
+  const card = fragment.querySelector('.device-card');
+  const shell = fragment.querySelector('.device-shell');
+  const frame = fragment.querySelector('.device-frame');
+  const status = fragment.querySelector('.frame-status');
+  const banner = fragment.querySelector('.cta-banner');
+  const name = fragment.querySelector('.device-name');
+  const metrics = fragment.querySelector('.device-metrics');
+  const focusButton = fragment.querySelector('.focus-button');
+  const masterButton = fragment.querySelector('.audio-master-button');
+  const driverBadge = fragment.querySelector('.driver-badge');
+
+  const session = {
+    id: view.id, view, card, shell, frame, status, banner, name, metrics,
+    focusButton, masterButton, driverBadge,
+    ready: false, hasCgbBridge: false, error: null,
+  };
+
+  focusButton.addEventListener('click', () => {
+    state.focusedId = state.focusedId === session.id ? null : session.id;
+    updateFocusLayout();
+  });
+  masterButton.addEventListener('click', () => {
+    state.audioMasterId = session.id;
+    updateAudio();
+    updateBadges();
+  });
+
+  applyViewport(session);
+  session.status.textContent = 'Starting playable…';
+  session.frame.addEventListener('load', () => {
+    if (!session.ready && !session.error) session.status.textContent = 'Document loaded · waiting for bridge…';
+    updateAudio();
+  });
+  const initial = effectiveView(view);
+  session.frame.srcdoc = injectPreviewBridge(state.sourceHtml, initial, { baseHref: previewBaseUrl() });
+  return session;
+}
+
+function destroySession(session) {
+  try { session.frame.src = 'about:blank'; } catch (_) {}
+  session.card.remove();
+}
+
+function destroyAllSessions() {
+  for (const session of state.sessions.values()) destroySession(session);
+  state.sessions.clear();
+  state.audioMasterId = null;
+  state.driverId = null;
+  state.focusedId = null;
+  elements.stage.classList.remove('focus-mode');
+  elements.clearFocus.classList.add('hidden');
+}
+
+function syncSessionsToProfile({ restart = false } = {}) {
+  if (!state.sourceHtml) return;
+  const profile = currentProfile();
+  if (!profile) return;
+  if (restart) destroyAllSessions();
+
+  const desiredIds = new Set(profile.views.map((view) => view.id));
+  for (const [id, session] of [...state.sessions]) {
+    if (!desiredIds.has(id)) {
+      destroySession(session);
+      state.sessions.delete(id);
+    }
+  }
+
+  for (const view of profile.views) {
+    let session = state.sessions.get(view.id);
+    if (!session) {
+      session = createSession(view);
+      state.sessions.set(view.id, session);
+    } else {
+      session.view = view;
+      applyViewport(session);
+    }
+    elements.stage.append(session.card);
+  }
+
+  const ids = profile.views.map((view) => view.id);
+  if (!ids.includes(state.driverId)) state.driverId = ids[0] || null;
+  if (!ids.includes(state.audioMasterId)) state.audioMasterId = ids[0] || null;
+  if (!ids.includes(state.focusedId)) state.focusedId = null;
+
+  elements.stage.dataset.viewCount = String(profile.views.length);
+  elements.stage.dataset.deviceKind = profile.kind;
+  updateProfileInfo();
+  updateBadges();
+  updateFocusLayout();
+  updateAudio();
+  updateGlobalBridgeStatus();
+}
+
+function compareScale() {
+  const profile = currentProfile();
+  if (!profile) return 0.4;
+  const stageWidth = Math.min(elements.stage.clientWidth || window.innerWidth - 40, 1680);
+  const cellWidth = Math.max(180, (stageWidth - 28) / 2);
+  let scale = Infinity;
+  for (const view of profile.views) scale = Math.min(scale, (cellWidth - 34) / view.width);
+  const cap = profile.kind === 'tablet' || profile.kind === 'foldable' ? 0.56 : 0.64;
+  return Math.max(0.14, Math.min(cap, scale));
+}
+
+function focusedScale(session) {
+  const stageWidth = Math.min(elements.stage.clientWidth || window.innerWidth - 40, 1680);
+  const availableHeight = Math.max(300, window.innerHeight - 235);
+  return Math.max(0.18, Math.min(0.9, (stageWidth - 60) / session.view.width, availableHeight / session.view.height));
+}
+
+function updateScales() {
+  const common = compareScale();
+  for (const session of state.sessions.values()) {
+    const scale = state.focusedId === session.id ? focusedScale(session) : common;
+    session.shell.style.setProperty('--scale', String(scale));
+    session.card.style.setProperty('--visual-width', `${session.view.width * scale + 20}px`);
+  }
+}
+
+function updateFocusLayout() {
+  elements.stage.classList.toggle('focus-mode', Boolean(state.focusedId));
+  elements.clearFocus.classList.toggle('hidden', !state.focusedId);
+  for (const session of state.sessions.values()) {
+    const focused = state.focusedId === session.id;
+    session.card.classList.toggle('focused', focused);
+    session.focusButton.textContent = focused ? 'Focused' : 'Focus';
+  }
+  updateScales();
+}
+
+function updateBadges() {
+  for (const session of state.sessions.values()) {
+    session.driverBadge.classList.toggle('visible', session.id === state.driverId);
+    session.masterButton.classList.toggle('active', session.id === state.audioMasterId);
+  }
+}
+
+function updateAudio() {
+  for (const session of state.sessions.values()) {
+    postFrame(session.frame, {
+      type: 'SET_MUTE',
+      muted: state.muted,
+      audible: session.id === state.audioMasterId,
+    });
   }
   elements.mute.innerHTML = `${state.muted ? '🔇' : '🔊'} <span>${state.muted ? 'Muted' : 'Sound'}</span>`;
 }
 
 function updateGlobalBridgeStatus() {
-  const entries = [...state.frames.values()];
-  if (!entries.length) return;
-  const ready = entries.filter((entry) => entry.ready).length;
-  const bridged = entries.filter((entry) => entry.hasCgbBridge).length;
-  const errors = entries.filter((entry) => entry.error).length;
-
+  const sessions = [...state.sessions.values()];
+  if (!sessions.length) return;
+  const ready = sessions.filter((session) => session.ready).length;
+  const bridged = sessions.filter((session) => session.hasCgbBridge).length;
+  const errors = sessions.filter((session) => session.error).length;
   if (errors) {
-    elements.bridgeStatus.textContent = `Preview errors: ${errors} · Ready: ${ready}/${entries.length}`;
+    elements.bridgeStatus.textContent = `Preview errors: ${errors} · Ready: ${ready}/${sessions.length}`;
     elements.bridgeStatus.className = 'status warning';
-  } else if (ready === entries.length) {
+  } else if (ready === sessions.length) {
     elements.bridgeStatus.textContent = bridged
-      ? `Ready ${ready}/${entries.length} · CGB bridge ${bridged}/${entries.length}`
-      : `Ready ${ready}/${entries.length} · CGB bridge not detected`;
+      ? `Ready ${ready}/${sessions.length} · CGB bridge ${bridged}/${sessions.length}`
+      : `Ready ${ready}/${sessions.length} · CGB bridge not detected`;
     elements.bridgeStatus.className = `status ${bridged ? 'ok' : 'warning'}`;
   } else {
-    elements.bridgeStatus.textContent = `Starting previews… ${ready}/${entries.length}`;
+    elements.bridgeStatus.textContent = `Starting live views… ${ready}/${sessions.length}`;
     elements.bridgeStatus.className = 'status neutral';
   }
 }
 
 function showCtaBanners() {
-  for (const entry of state.frames.values()) {
-    entry.banner.classList.add('visible');
-    clearTimeout(entry.banner.__hideTimer);
-    entry.banner.__hideTimer = setTimeout(() => entry.banner.classList.remove('visible'), 2400);
+  for (const session of state.sessions.values()) {
+    session.banner.classList.add('visible');
+    clearTimeout(session.banner.__hideTimer);
+    session.banner.__hideTimer = setTimeout(() => session.banner.classList.remove('visible'), 2400);
   }
 }
 
 function sendCommand(command) {
-  for (const entry of state.frames.values()) postFrame(entry.frame, { type: 'COMMAND', command });
+  for (const session of state.sessions.values()) postFrame(session.frame, { type: 'COMMAND', command });
   if (command === 'download') showCtaBanners();
+}
+
+function setDriver(id) {
+  if (!state.sessions.has(id) || state.driverId === id) return;
+  state.driverId = id;
+  updateBadges();
 }
 
 async function loadFile(file) {
@@ -265,38 +284,30 @@ async function loadFile(file) {
   elements.bridgeStatus.textContent = 'Bridge: waiting';
   elements.bridgeStatus.className = 'status neutral';
   [elements.reload, elements.mute, elements.endcard, elements.cta].forEach((button) => button.disabled = false);
-  render();
+  syncSessionsToProfile({ restart: true });
 }
 
 elements.fileInput.addEventListener('change', () => loadFile(elements.fileInput.files?.[0]));
-elements.reload.addEventListener('click', render);
-elements.device.addEventListener('change', () => { state.selectedDeviceId = elements.device.value; render(); });
-elements.singleMode.addEventListener('click', () => {
-  state.view = 'single';
-  setActive([elements.singleMode, elements.gridMode], elements.singleMode);
-  document.querySelectorAll('.grid-only').forEach((node) => node.classList.add('hidden'));
-  document.querySelectorAll('.single-only').forEach((node) => node.classList.remove('hidden'));
-  render();
+elements.reload.addEventListener('click', () => syncSessionsToProfile({ restart: true }));
+elements.device.addEventListener('change', () => {
+  state.selectedProfileId = elements.device.value;
+  syncSessionsToProfile();
 });
-elements.gridMode.addEventListener('click', () => {
-  state.view = 'grid';
-  setActive([elements.singleMode, elements.gridMode], elements.gridMode);
-  document.querySelectorAll('.grid-only').forEach((node) => node.classList.remove('hidden'));
-  document.querySelectorAll('.single-only').forEach((node) => node.classList.add('hidden'));
-  render();
+elements.previewDpr.addEventListener('click', () => {
+  state.dprMode = 'preview';
+  setActive([elements.previewDpr, elements.deviceDpr], elements.previewDpr);
+  for (const session of state.sessions.values()) applyViewport(session);
+  updateScales();
 });
-elements.portrait.addEventListener('click', () => {
-  state.orientation = 'portrait';
-  setActive([elements.portrait, elements.landscape], elements.portrait);
-  render();
-});
-elements.landscape.addEventListener('click', () => {
-  state.orientation = 'landscape';
-  setActive([elements.portrait, elements.landscape], elements.landscape);
-  render();
+elements.deviceDpr.addEventListener('click', () => {
+  state.dprMode = 'device';
+  setActive([elements.previewDpr, elements.deviceDpr], elements.deviceDpr);
+  for (const session of state.sessions.values()) applyViewport(session);
+  updateScales();
 });
 elements.sync.addEventListener('change', () => { state.syncInput = elements.sync.checked; });
-elements.mute.addEventListener('click', () => { state.muted = !state.muted; updateFrameAudio(); });
+elements.clearFocus.addEventListener('click', () => { state.focusedId = null; updateFocusLayout(); });
+elements.mute.addEventListener('click', () => { state.muted = !state.muted; updateAudio(); });
 elements.endcard.addEventListener('click', () => sendCommand('gameEnd'));
 elements.cta.addEventListener('click', () => sendCommand('download'));
 
@@ -320,29 +331,30 @@ elements.dropZone.addEventListener('drop', (event) => {
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (!message || message.source !== 'cgb-preview-frame') return;
-  const sourceEntry = [...state.frames.entries()].find(([, entry]) => entry.frame.contentWindow === event.source);
-  if (!sourceEntry) return;
-  const [sourceId, entry] = sourceEntry;
+  const session = [...state.sessions.values()].find((entry) => entry.frame.contentWindow === event.source);
+  if (!session) return;
 
   if (message.type === 'BRIDGE_INSTALLED') {
-    if (!entry.ready && !entry.error) entry.status.textContent = 'Preview bridge installed · starting Cocos…';
+    if (!session.ready && !session.error) session.status.textContent = 'Preview bridge installed · starting Cocos…';
   } else if (message.type === 'READY') {
-    entry.ready = true;
-    entry.hasCgbBridge = Boolean(message.hasCgbBridge);
-    entry.status.classList.add('ready');
+    session.ready = true;
+    session.hasCgbBridge = Boolean(message.hasCgbBridge);
+    session.status.classList.add('ready');
     updateGlobalBridgeStatus();
-    updateFrameAudio();
+    updateAudio();
   } else if (message.type === 'FRAME_ERROR' || message.type === 'FRAME_REJECTION') {
-    entry.error = message.message || 'Unknown preview error';
-    entry.status.classList.remove('ready');
-    entry.status.classList.add('error');
+    session.error = message.message || 'Unknown preview error';
+    session.status.classList.remove('ready');
+    session.status.classList.add('error');
     const location = message.line ? ` · line ${message.line}${message.column ? `:${message.column}` : ''}` : '';
-    entry.status.textContent = `${entry.error}${location}`;
-    entry.status.title = `${entry.error}${message.file ? `\n${message.file}` : ''}${location}`;
+    session.status.textContent = `${session.error}${location}`;
+    session.status.title = `${session.error}${message.file ? `\n${message.file}` : ''}${location}`;
     updateGlobalBridgeStatus();
-  } else if (message.type === 'INPUT' && state.view === 'grid' && state.syncInput) {
-    for (const [id, target] of state.frames) {
-      if (id === sourceId || !target.frame.srcdoc) continue;
+  } else if (message.type === 'INPUT') {
+    if (message.eventType === 'pointerdown') setDriver(session.id);
+    if (!state.syncInput || session.id !== state.driverId) return;
+    for (const target of state.sessions.values()) {
+      if (target.id === session.id) continue;
       postFrame(target.frame, { type: 'SYNC_INPUT', ...message });
     }
   } else if (message.type === 'CTA_ATTEMPT') {
@@ -352,7 +364,8 @@ window.addEventListener('message', (event) => {
 
 let resizeTimer = 0;
 window.addEventListener('resize', () => {
-  if (state.view !== 'grid' || !state.sourceHtml) return;
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(render, 180);
+  resizeTimer = setTimeout(updateScales, 80);
 });
+
+updateProfileInfo();
