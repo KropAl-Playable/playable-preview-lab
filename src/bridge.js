@@ -19,6 +19,22 @@ export function buildInjectedBridge(device) {
     try { parent.postMessage(Object.assign({ source: 'cgb-preview-frame', type: type }, payload || {}), parentOrigin); } catch (_) {}
   }
 
+  window.addEventListener('error', function(event) {
+    post('FRAME_ERROR', {
+      message: event && event.message ? String(event.message) : 'Unknown frame error',
+      file: event && event.filename ? String(event.filename) : '',
+      line: event && event.lineno ? event.lineno : 0,
+      column: event && event.colno ? event.colno : 0
+    });
+  }, true);
+  window.addEventListener('unhandledrejection', function(event) {
+    var reason = event && event.reason;
+    post('FRAME_REJECTION', {
+      message: reason && reason.message ? String(reason.message) : String(reason || 'Unhandled promise rejection')
+    });
+  });
+  post('BRIDGE_INSTALLED', { device: device });
+
   function trackAudioContext(name) {
     var Native = window[name];
     if (typeof Native !== 'function') return;
@@ -125,17 +141,29 @@ export function buildInjectedBridge(device) {
 </script>`;
 }
 
-export function injectPreviewBridge(html, device) {
+export function injectPreviewBridge(html, device, options = {}) {
   const bridge = buildInjectedBridge(device);
+  const baseHref = typeof options.baseHref === 'string' ? options.baseHref : '';
+  const hasBase = /<base(?:\s[^>]*)?>/i.test(html);
+  const safeBaseHref = baseHref
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const base = !hasBase && safeBaseHref
+    ? `<base data-cgb-preview-base href="${safeBaseHref}">`
+    : '';
+  const injection = base + bridge;
+
   const headMatch = html.match(/<head(?:\s[^>]*)?>/i);
   if (headMatch && headMatch.index != null) {
     const insertAt = headMatch.index + headMatch[0].length;
-    return html.slice(0, insertAt) + bridge + html.slice(insertAt);
+    return html.slice(0, insertAt) + injection + html.slice(insertAt);
   }
   const htmlMatch = html.match(/<html(?:\s[^>]*)?>/i);
   if (htmlMatch && htmlMatch.index != null) {
     const insertAt = htmlMatch.index + htmlMatch[0].length;
-    return html.slice(0, insertAt) + '<head>' + bridge + '</head>' + html.slice(insertAt);
+    return html.slice(0, insertAt) + '<head>' + injection + '</head>' + html.slice(insertAt);
   }
-  return bridge + html;
+  return '<head>' + injection + '</head>' + html;
 }
