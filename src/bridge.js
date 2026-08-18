@@ -100,32 +100,30 @@ export function buildInjectedBridge(initialDevice) {
   function patchAudioContext(name) {
     var Native = window[name];
     if (typeof Native !== 'function' || !Native.prototype) return;
-
-    var proto = Native.prototype;
-    var nativeResume = typeof proto.resume === 'function' ? proto.resume : null;
-    var nativeSuspend = typeof proto.suspend === 'function' ? proto.suspend : null;
-
-    // Cocos/WebAudio commonly resumes its context again after every user gesture.
-    // Block that resume while the Preview Lab says this frame must stay muted.
-    if (nativeResume && !proto.__cgbPreviewResumePatched) {
-      try {
-        Object.defineProperty(proto, '__cgbPreviewResumePatched', { value: true, configurable: true });
-        proto.resume = function(){
-          rememberContext(this);
-          if (shouldMuteAudio()) {
-            try {
-              if (nativeSuspend && this.state !== 'suspended') nativeSuspend.call(this);
-            } catch (_) {}
-            return Promise.resolve();
-          }
-          return nativeResume.apply(this, arguments);
-        };
-      } catch (_) {}
-    }
+    var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
+    var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
 
     function WrappedAudioContext() {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
       rememberContext(instance);
+
+      // Patch the instance rather than the browser-shared prototype. Each iframe
+      // must enforce its own audible/muted policy independently.
+      if (nativeResume) {
+        try {
+          instance.resume = function(){
+            rememberContext(instance);
+            if (shouldMuteAudio()) {
+              try {
+                if (nativeSuspend && instance.state !== 'suspended') nativeSuspend.call(instance);
+              } catch (_) {}
+              return Promise.resolve();
+            }
+            return nativeResume.apply(instance, arguments);
+          };
+        } catch (_) {}
+      }
+
       if (shouldMuteAudio() && nativeSuspend) {
         setTimeout(function(){
           try { nativeSuspend.call(instance); } catch (_) {}
