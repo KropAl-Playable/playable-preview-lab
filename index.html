@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Playable Preview Lab</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div>
+        <h1>Playable Preview Lab</h1>
+        <p>Viewport validator for single-HTML playable ads</p>
+      </div>
+    </div>
+
+    <div class="toolbar-actions">
+      <label class="button primary file-button" title="Load a local single-HTML playable into the preview page">
+        <input id="fileInput" type="file" accept=".html,text/html" hidden />
+        Load HTML
+      </label>
+      <button id="reloadButton" class="button" disabled title="Reload every active preview from the same source HTML">Reload</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="dropZone" class="drop-zone empty">
+      <div class="drop-copy">
+        <strong>Drop a playable HTML here</strong>
+        <span>or use <b>Load HTML</b>. The file stays in your browser and is not uploaded.</span>
+      </div>
+    </section>
+
+    <section class="controls panel" aria-label="Preview controls">
+      <div class="control-group">
+        <span class="control-label">View</span>
+        <div class="segmented" role="group" aria-label="View mode">
+          <button id="singleModeButton" class="active">Single</button>
+          <button id="gridModeButton">Grid</button>
+        </div>
+      </div>
+
+      <label class="control-group single-only">
+        <span class="control-label">Device</span>
+        <select id="deviceSelect"></select>
+      </label>
+
+      <div class="control-group">
+        <span class="control-label">Orientation</span>
+        <div class="segmented" role="group" aria-label="Orientation">
+          <button id="portraitButton" class="active">Portrait</button>
+          <button id="landscapeButton">Landscape</button>
+        </div>
+      </div>
+
+      <label class="control-group grid-only toggle-row hidden" title="Mirror pointer input from the device you interact with to every other preview">
+        <input id="syncInputToggle" type="checkbox" />
+        <span>Sync Input</span>
+      </label>
+
+      <div class="spacer"></div>
+
+      <button id="muteButton" class="button icon-button" disabled title="Mute or unmute all previews">🔊 <span>Sound</span></button>
+      <button id="endcardButton" class="button" disabled title="Calls the playable bridge gameEnd/game_end method in every active preview">Show Endcard</button>
+      <button id="ctaButton" class="button danger" disabled title="Calls the playable bridge download method without leaving the validator">CTA download</button>
+    </section>
+
+    <section id="sourceInfo" class="source-info hidden">
+      <span id="sourceName"></span>
+      <span id="sourceSize"></span>
+      <span id="bridgeStatus" class="status neutral">Bridge: waiting</span>
+    </section>
+
+    <section id="previewStage" class="preview-stage" aria-live="polite"></section>
+  </main>
+
+  <template id="deviceTemplate">
+    <article class="device-card">
+      <header class="device-card-header">
+        <div>
+          <strong class="device-name"></strong>
+          <span class="device-metrics"></span>
+        </div>
+        <button class="audio-master-button" title="Use this preview as the only audible device in Grid View">🔈</button>
+      </header>
+      <div class="device-shell">
+        <div class="device-screen-wrap">
+          <iframe class="device-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups" allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>
+          <div class="cta-banner" aria-hidden="true">You have successfully clicked CTA</div>
+          <div class="frame-status">Waiting for playable…</div>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
