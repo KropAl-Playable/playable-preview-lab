@@ -15,7 +15,7 @@ const state = {
   sourceHtml: '', fileName: '', fileSize: 0,
   view: 'single', orientation: 'portrait', selectedDeviceId: 'iphone-13',
   muted: false, syncInput: false, audioMasterId: null,
-  frames: new Map(),
+  frames: new Map(), renderToken: 0,
 };
 
 for (const device of DEVICES) {
@@ -55,11 +55,11 @@ function createPlayableDocument(device) {
 }
 
 function scaleForGridPair(device) {
-  const stageWidth = Math.min(Math.max(window.innerWidth - 40, 560), 1680);
+  const stageWidth = Math.min(Math.max(window.innerWidth - 40, 360), 1680);
   const columnWidth = (stageWidth - 28) / 2;
   const logicalMaxWidth = Math.max(device.width, device.height);
   const cap = device.kind === 'tablet' ? 0.48 : 0.56;
-  return Math.max(0.18, Math.min(cap, (columnWidth - 34) / logicalMaxWidth));
+  return Math.max(0.12, Math.min(cap, (columnWidth - 34) / logicalMaxWidth));
 }
 
 function ensureAudioMaster(validKeys) {
@@ -92,17 +92,10 @@ function createDeviceCard(rawDevice, orientation, scale) {
 
   shell.style.setProperty('--frame-w', `${device.width}px`);
   shell.style.setProperty('--frame-h', `${device.height}px`);
-  shell.style.setProperty('--scale', String(scale));
-  card.style.setProperty('--visual-width', `${device.width * scale + 20}px`);
+  if (scale != null) shell.style.setProperty('--scale', String(scale));
+  card.style.setProperty('--visual-width', `${device.width * (scale ?? 0.7) + 20}px`);
 
   frame.dataset.frameKey = key;
-  frame.srcdoc = createPlayableDocument(device);
-  frame.addEventListener('load', () => {
-    const entry = state.frames.get(key);
-    if (entry && !entry.ready && !entry.error) status.textContent = 'Document loaded · waiting for bridge…';
-    updateFrameAudio();
-  });
-
   masterButton.classList.toggle('active', key === state.audioMasterId);
   masterButton.addEventListener('click', () => {
     state.audioMasterId = key;
@@ -111,22 +104,62 @@ function createDeviceCard(rawDevice, orientation, scale) {
     updateFrameAudio();
   });
 
-  state.frames.set(key, {
+  const entry = {
     key, frame, status, banner, device: rawDevice, orientation,
+    sourceDocument: createPlayableDocument(device),
     ready: false, hasCgbBridge: false, error: null,
-  });
-  return card;
+  };
+  state.frames.set(key, entry);
+  return { card, entry };
 }
 
-function renderSingle() {
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function startFrame(entry, renderToken) {
+  if (renderToken !== state.renderToken || !entry.frame.isConnected) return;
+  entry.status.textContent = 'Starting playable…';
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    entry.frame.addEventListener('load', () => {
+      if (!entry.ready && !entry.error) entry.status.textContent = 'Document loaded · waiting for bridge…';
+      updateFrameAudio();
+      done();
+    }, { once: true });
+    entry.frame.srcdoc = entry.sourceDocument;
+    setTimeout(done, 2500);
+  });
+}
+
+async function startGridQueue(entries, renderToken) {
+  let cursor = 0;
+  async function worker() {
+    while (cursor < entries.length && renderToken === state.renderToken) {
+      const entry = entries[cursor++];
+      await startFrame(entry, renderToken);
+      await wait(100);
+    }
+  }
+  await Promise.all([worker(), worker()]);
+}
+
+function renderSingle(renderToken) {
   const rawDevice = DEVICES.find((device) => device.id === state.selectedDeviceId) || DEVICES[0];
   if (!rawDevice) return;
   const key = frameKey(rawDevice.id, state.orientation);
   ensureAudioMaster([key]);
-  elements.stage.append(createDeviceCard(rawDevice, state.orientation, 0.7));
+  const { card, entry } = createDeviceCard(rawDevice, state.orientation, null);
+  elements.stage.append(card);
+  void startFrame(entry, renderToken);
 }
 
-function renderGrid() {
+function renderGrid(renderToken) {
   const keys = DEVICES.flatMap((device) => [frameKey(device.id, 'portrait'), frameKey(device.id, 'landscape')]);
   ensureAudioMaster(keys);
 
@@ -135,6 +168,7 @@ function renderGrid() {
   headings.innerHTML = '<div>Portrait</div><div>Landscape</div>';
   elements.stage.append(headings);
 
+  const entries = [];
   for (const rawDevice of DEVICES) {
     const scale = scaleForGridPair(rawDevice);
     const row = document.createElement('section');
@@ -142,28 +176,35 @@ function renderGrid() {
     row.dataset.kind = rawDevice.kind;
     row.dataset.deviceId = rawDevice.id;
 
+    const portrait = createDeviceCard(rawDevice, 'portrait', scale);
     const portraitCell = document.createElement('div');
     portraitCell.className = 'orientation-cell portrait-cell';
-    portraitCell.append(createDeviceCard(rawDevice, 'portrait', scale));
+    portraitCell.append(portrait.card);
 
+    const landscape = createDeviceCard(rawDevice, 'landscape', scale);
     const landscapeCell = document.createElement('div');
     landscapeCell.className = 'orientation-cell landscape-cell';
-    landscapeCell.append(createDeviceCard(rawDevice, 'landscape', scale));
+    landscapeCell.append(landscape.card);
 
     row.append(portraitCell, landscapeCell);
     elements.stage.append(row);
+    entries.push(portrait.entry, landscape.entry);
   }
+
+  void startGridQueue(entries, renderToken);
 }
 
 function render() {
+  const renderToken = ++state.renderToken;
   state.frames.clear();
   elements.stage.innerHTML = '';
   if (!state.sourceHtml) return;
 
   elements.stage.className = `preview-stage ${state.view}-view`;
-  if (state.view === 'single') renderSingle();
-  else renderGrid();
+  if (state.view === 'single') renderSingle(renderToken);
+  else renderGrid(renderToken);
   updateFrameAudio();
+  updateGlobalBridgeStatus();
 }
 
 function postFrame(frame, message) {
@@ -301,7 +342,7 @@ window.addEventListener('message', (event) => {
     updateGlobalBridgeStatus();
   } else if (message.type === 'INPUT' && state.view === 'grid' && state.syncInput) {
     for (const [id, target] of state.frames) {
-      if (id === sourceId) continue;
+      if (id === sourceId || !target.frame.srcdoc) continue;
       postFrame(target.frame, { type: 'SYNC_INPUT', ...message });
     }
   } else if (message.type === 'CTA_ATTEMPT') {
@@ -309,6 +350,9 @@ window.addEventListener('message', (event) => {
   }
 });
 
+let resizeTimer = 0;
 window.addEventListener('resize', () => {
-  if (state.view === 'grid' && state.sourceHtml) render();
+  if (state.view !== 'grid' || !state.sourceHtml) return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(render, 180);
 });
