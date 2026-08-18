@@ -5,16 +5,15 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   fileInput: $('#fileInput'), reload: $('#reloadButton'), dropZone: $('#dropZone'), stage: $('#previewStage'),
   device: $('#deviceSelect'), previewDpr: $('#previewDprButton'), deviceDpr: $('#deviceDprButton'),
-  sync: $('#syncInputToggle'), clearFocus: $('#clearFocusButton'), mute: $('#muteButton'),
-  endcard: $('#endcardButton'), cta: $('#ctaButton'), sourceInfo: $('#sourceInfo'),
-  sourceName: $('#sourceName'), sourceSize: $('#sourceSize'), profileInfo: $('#profileInfo'),
+  clearFocus: $('#clearFocusButton'), mute: $('#muteButton'), endcard: $('#endcardButton'), cta: $('#ctaButton'),
+  sourceInfo: $('#sourceInfo'), sourceName: $('#sourceName'), sourceSize: $('#sourceSize'), profileInfo: $('#profileInfo'),
   bridgeStatus: $('#bridgeStatus'), template: $('#deviceTemplate'),
 };
 
 const state = {
   sourceHtml: '', fileName: '', fileSize: 0,
   selectedProfileId: 'iphone-13', dprMode: 'preview',
-  muted: false, syncInput: true, audioMasterId: null, driverId: null, focusedId: null,
+  muted: false, audioMasterId: null, focusedId: null,
   sessions: new Map(),
 };
 
@@ -26,7 +25,6 @@ for (const profile of DEVICE_PROFILES) {
   elements.device.append(option);
 }
 elements.device.value = state.selectedProfileId;
-elements.sync.checked = state.syncInput;
 
 function currentProfile() {
   return DEVICE_PROFILES.find((profile) => profile.id === state.selectedProfileId) || DEVICE_PROFILES[0];
@@ -94,11 +92,10 @@ function createSession(view) {
   const metrics = fragment.querySelector('.device-metrics');
   const focusButton = fragment.querySelector('.focus-button');
   const masterButton = fragment.querySelector('.audio-master-button');
-  const driverBadge = fragment.querySelector('.driver-badge');
 
   const session = {
     id: view.id, view, card, shell, frame, status, banner, name, metrics,
-    focusButton, masterButton, driverBadge,
+    focusButton, masterButton,
     ready: false, hasCgbBridge: false, error: null,
   };
 
@@ -132,7 +129,6 @@ function destroyAllSessions() {
   for (const session of state.sessions.values()) destroySession(session);
   state.sessions.clear();
   state.audioMasterId = null;
-  state.driverId = null;
   state.focusedId = null;
   elements.stage.classList.remove('focus-mode');
   elements.clearFocus.classList.add('hidden');
@@ -165,7 +161,6 @@ function syncSessionsToProfile({ restart = false } = {}) {
   }
 
   const ids = profile.views.map((view) => view.id);
-  if (!ids.includes(state.driverId)) state.driverId = ids[0] || null;
   if (!ids.includes(state.audioMasterId)) state.audioMasterId = ids[0] || null;
   if (!ids.includes(state.focusedId)) state.focusedId = null;
 
@@ -217,7 +212,6 @@ function updateFocusLayout() {
 
 function updateBadges() {
   for (const session of state.sessions.values()) {
-    session.driverBadge.classList.toggle('visible', session.id === state.driverId);
     session.masterButton.classList.toggle('active', session.id === state.audioMasterId);
   }
 }
@@ -231,6 +225,7 @@ function updateAudio() {
     });
   }
   elements.mute.innerHTML = `${state.muted ? '🔇' : '🔊'} <span>${state.muted ? 'Muted' : 'Sound'}</span>`;
+  elements.mute.classList.toggle('active', state.muted);
 }
 
 function updateGlobalBridgeStatus() {
@@ -266,12 +261,6 @@ function sendCommand(command) {
   if (command === 'download') showCtaBanners();
 }
 
-function setDriver(id) {
-  if (!state.sessions.has(id) || state.driverId === id) return;
-  state.driverId = id;
-  updateBadges();
-}
-
 async function loadFile(file) {
   if (!file) return;
   state.sourceHtml = await file.text();
@@ -305,7 +294,6 @@ elements.deviceDpr.addEventListener('click', () => {
   for (const session of state.sessions.values()) applyViewport(session);
   updateScales();
 });
-elements.sync.addEventListener('change', () => { state.syncInput = elements.sync.checked; });
 elements.clearFocus.addEventListener('click', () => { state.focusedId = null; updateFocusLayout(); });
 elements.mute.addEventListener('click', () => { state.muted = !state.muted; updateAudio(); });
 elements.endcard.addEventListener('click', () => sendCommand('gameEnd'));
@@ -350,13 +338,6 @@ window.addEventListener('message', (event) => {
     session.status.textContent = `${session.error}${location}`;
     session.status.title = `${session.error}${message.file ? `\n${message.file}` : ''}${location}`;
     updateGlobalBridgeStatus();
-  } else if (message.type === 'INPUT') {
-    if (message.eventType === 'pointerdown') setDriver(session.id);
-    if (!state.syncInput || session.id !== state.driverId) return;
-    for (const target of state.sessions.values()) {
-      if (target.id === session.id) continue;
-      postFrame(target.frame, { type: 'SYNC_INPUT', ...message });
-    }
   } else if (message.type === 'CTA_ATTEMPT') {
     showCtaBanners();
   }
