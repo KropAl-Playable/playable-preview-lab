@@ -1,7 +1,7 @@
 const BRIDGE_ID = '__CGB_PREVIEW_BRIDGE__';
 
-export function buildInjectedBridge(device) {
-  const config = JSON.stringify({ width: device.width, height: device.height, dpr: device.dpr });
+export function buildInjectedBridge(initialDevice) {
+  const config = JSON.stringify({ width: initialDevice.width, height: initialDevice.height, dpr: initialDevice.dpr });
   return `
 <script data-cgb-preview-bridge>
 (function installCgbPreviewBridge(){
@@ -12,10 +12,33 @@ export function buildInjectedBridge(device) {
   var globallyMuted = false;
   var frameAudible = true;
 
-  try { Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: function(){ return device.dpr; } }); } catch (_) {}
+  function defineMetric(target, name, getter) {
+    try { Object.defineProperty(target, name, { configurable: true, get: getter }); } catch (_) {}
+  }
+  defineMetric(window, 'devicePixelRatio', function(){ return device.dpr; });
+  if (window.screen) {
+    defineMetric(window.screen, 'width', function(){ return device.width; });
+    defineMetric(window.screen, 'height', function(){ return device.height; });
+    defineMetric(window.screen, 'availWidth', function(){ return device.width; });
+    defineMetric(window.screen, 'availHeight', function(){ return device.height; });
+  }
 
   function post(type, payload) {
     try { parent.postMessage(Object.assign({ source: 'cgb-preview-frame', type: type }, payload || {}), parentOrigin); } catch (_) {}
+  }
+
+  function applyViewport(next) {
+    if (!next) return;
+    device = {
+      width: Number(next.width) || device.width,
+      height: Number(next.height) || device.height,
+      dpr: Number(next.dpr) || 1
+    };
+    requestAnimationFrame(function(){
+      try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+      try { window.dispatchEvent(new Event('orientationchange')); } catch (_) {}
+      post('VIEWPORT_APPLIED', { device: device });
+    });
   }
 
   // AppLovin supplies mraid.js in the real ad container. GitHub Pages does not,
@@ -44,8 +67,6 @@ export function buildInjectedBridge(device) {
     var target = event && event.target;
     if (target && target !== window) {
       var resourceUrl = target.src || target.href || '';
-      // mraid.js is intentionally provided by the network in production and by
-      // the preview stub above while validating on GitHub Pages.
       if (/\/mraid\.js(?:[?#].*)?$/i.test(String(resourceUrl))) return;
       post('FRAME_ERROR', { message: 'Resource failed to load: ' + String(resourceUrl || target.tagName || 'unknown resource') });
       return;
@@ -142,6 +163,7 @@ export function buildInjectedBridge(device) {
     var msg = event.data;
     if (!msg || msg.source !== 'cgb-preview-host') return;
     if (msg.type === 'SET_MUTE') { globallyMuted = !!msg.muted; frameAudible = !!msg.audible; applyMute(); }
+    else if (msg.type === 'SET_VIEWPORT') applyViewport(msg.device);
     else if (msg.type === 'COMMAND') {
       var ok = callBridge(msg.command);
       post('COMMAND_RESULT', { command: msg.command, ok: ok });
@@ -165,8 +187,13 @@ export function buildInjectedBridge(device) {
     }, true);
   });
 
-  window.addEventListener('load', function(){ setTimeout(function(){ applyMute(); post('READY', { hasCgbBridge: !!(window.cgb || window.super_html) }); }, 0); });
-  window.${BRIDGE_ID} = { applyMute: applyMute, callBridge: callBridge };
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      applyMute();
+      post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device });
+    }, 0);
+  });
+  window.${BRIDGE_ID} = { applyMute: applyMute, callBridge: callBridge, applyViewport: applyViewport };
 })();
 </script>`;
 }
