@@ -5,9 +5,8 @@ A static browser-based viewport validator for single-HTML playable ads.
 ## MVP features
 
 - Load a local `.html` playable by file picker or drag & drop.
-- Single-device preview.
-- Grid View with a four-column base grid: phones occupy one column, tablets occupy two.
-- Portrait / landscape switch.
+- Single-device preview with Portrait / Landscape switch.
+- Paired Grid View: every device occupies one row with **Portrait on the left** and **Landscape on the right** using the same visual scale.
 - Per-device CSS viewport dimensions and preview DPR override.
 - Grid View Sync Input using normalized pointer coordinates.
 - Only one Grid View frame is audible at a time.
@@ -15,10 +14,18 @@ A static browser-based viewport validator for single-HTML playable ads.
 - Global `Show Endcard` command (`window.cgb.gameEnd()` / `game_end()`).
 - Global `CTA download` command (`window.cgb.download()`) with store navigation intercepted in preview mode.
 - AppLovin-validator-style CTA confirmation banner.
+- Preview-frame runtime error relay into each device card.
+- Minimal preview `mraid` stub so AppLovin playables can run outside the ad-network container.
+
+## Loading model
+
+Loaded playables are rendered through `iframe.srcdoc` rather than Blob URLs. Preview Lab injects a small bridge and an explicit document `<base>` before the playable bootstrap. This keeps relative Cocos/SystemJS URLs resolvable while the packed runtime intercepts its embedded resources.
 
 ## Important limitation
 
 This page simulates **viewport dimensions and DPR**, not a real browser/device engine. It cannot emulate old WebView versions, GPU/WebGL capabilities, codec support, UA quirks or physical device performance. Real-device QA is still required.
+
+Grid View intentionally runs many playable instances at once and can therefore be substantially heavier than Single View. Use Single View for performance-sensitive debugging.
 
 ## GitHub Pages
 
