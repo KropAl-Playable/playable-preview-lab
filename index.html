@@ -13,7 +13,7 @@
       <div class="brand-mark">P</div>
       <div>
         <h1>Playable Preview Lab</h1>
-        <p>Viewport validator for single-HTML playable ads</p>
+        <p>Live compare validator for single-HTML playable ads</p>
       </div>
     </div>
 
@@ -22,7 +22,7 @@
         <input id="fileInput" type="file" accept=".html,text/html" hidden />
         Load HTML
       </label>
-      <button id="reloadButton" class="button" disabled title="Reload every active preview from the same source HTML">Reload</button>
+      <button id="reloadButton" class="button" disabled title="Explicitly restart every active runtime from the source HTML">Reload runtimes</button>
     </div>
   </header>
 
@@ -35,34 +35,27 @@
     </section>
 
     <section class="controls panel" aria-label="Preview controls">
-      <div class="control-group">
-        <span class="control-label">View</span>
-        <div class="segmented" role="group" aria-label="View mode">
-          <button id="singleModeButton" class="active">Single</button>
-          <button id="gridModeButton">Grid</button>
-        </div>
-      </div>
-
-      <label class="control-group single-only">
-        <span class="control-label">Device</span>
+      <label class="control-group">
+        <span class="control-label">Device profile</span>
         <select id="deviceSelect"></select>
       </label>
 
-      <div class="control-group single-only">
-        <span class="control-label">Orientation</span>
-        <div class="segmented" role="group" aria-label="Orientation">
-          <button id="portraitButton" class="active">Portrait</button>
-          <button id="landscapeButton">Landscape</button>
+      <div class="control-group">
+        <span class="control-label">Render DPR</span>
+        <div class="segmented" role="group" aria-label="Render DPR">
+          <button id="previewDprButton" class="active" title="Use DPR 1 for lower GPU load while preserving CSS viewport dimensions">Preview 1×</button>
+          <button id="deviceDprButton" title="Use the configured device DPR">Device DPR</button>
         </div>
       </div>
 
-      <label class="control-group grid-only toggle-row hidden" title="Mirror pointer input from the preview you interact with to every other loaded preview">
-        <input id="syncInputToggle" type="checkbox" />
+      <label class="control-group toggle-row" title="The viewport you interact with becomes Driver and mirrors normalized pointer input to the other active views">
+        <input id="syncInputToggle" type="checkbox" checked />
         <span>Sync Input</span>
       </label>
 
       <div class="spacer"></div>
 
+      <button id="clearFocusButton" class="button hidden" title="Return the focused viewport to the regular Compare layout">Back to Compare</button>
       <button id="muteButton" class="button icon-button" disabled title="Mute or unmute all previews">🔊 <span>Sound</span></button>
       <button id="endcardButton" class="button" disabled title="Calls the playable bridge gameEnd/game_end method in every active preview">Show Endcard</button>
       <button id="ctaButton" class="button danger" disabled title="Calls the playable bridge download method without leaving the validator">CTA download</button>
@@ -71,20 +64,27 @@
     <section id="sourceInfo" class="source-info hidden">
       <span id="sourceName"></span>
       <span id="sourceSize"></span>
+      <span id="profileInfo"></span>
       <span id="bridgeStatus" class="status neutral">Bridge: waiting</span>
     </section>
 
-    <section id="previewStage" class="preview-stage" aria-live="polite"></section>
+    <section id="previewStage" class="preview-stage compare-view" aria-live="polite"></section>
   </main>
 
   <template id="deviceTemplate">
     <article class="device-card">
       <header class="device-card-header">
-        <div>
-          <strong class="device-name"></strong>
+        <div class="device-card-copy">
+          <div class="device-title-row">
+            <strong class="device-name"></strong>
+            <span class="driver-badge">DRIVER</span>
+          </div>
           <span class="device-metrics"></span>
         </div>
-        <button class="audio-master-button" title="Use this preview as the only audible device in Grid View">🔈</button>
+        <div class="device-card-actions">
+          <button class="focus-button" title="Focus this live viewport without restarting it">Focus</button>
+          <button class="audio-master-button" title="Use this preview as the only audible viewport">🔈</button>
+        </div>
       </header>
       <div class="device-shell">
         <div class="device-screen-wrap">
