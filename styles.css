@@ -56,6 +56,7 @@ main { padding: 16px 20px 48px; }
 .button.primary { background: var(--accent-2); border-color: #7187ff; }
 .button.danger { background: #3a242a; border-color: #6a3641; }
 .button.danger:hover:not(:disabled) { background: #492831; border-color: #9a4858; }
+.button.active { background: #32232c; border-color: #a64f65; color: #ffdfe6; }
 .icon-button { min-width: 94px; }
 .file-button { display: inline-flex; align-items: center; }
 
@@ -85,8 +86,6 @@ main { padding: 16px 20px 48px; }
 .segmented button.active { background: #303744; color: #fff; }
 select { min-width: 230px; }
 .spacer { flex: 1 1 20px; }
-.toggle-row { grid-auto-flow: column; align-items: center; align-self: center; gap: 8px; min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #20252c; }
-.toggle-row input { accent-color: var(--accent); }
 .hidden { display: none !important; }
 
 .source-info { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 10px 2px 0; color: var(--muted); font-size: 12px; }
@@ -127,18 +126,6 @@ select { min-width: 230px; }
 .device-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .device-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .device-metrics { color: var(--muted); font-size: 10px; }
-.driver-badge {
-  display: none;
-  flex: 0 0 auto;
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: #233b77;
-  color: #bfcfff;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: .05em;
-}
-.driver-badge.visible { display: inline-block; }
 .device-card-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .focus-button { min-height: 28px; padding: 0 8px; background: transparent; color: var(--muted); font-size: 10px; }
 .audio-master-button { width: 30px; min-height: 28px; padding: 0; border-color: transparent; background: transparent; opacity: .35; }
