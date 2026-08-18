@@ -67,6 +67,8 @@ The injected bridge:
 
 This is intended to make the visible Global Mute button behave like a practical tab-wide mute for the playable runtimes, even though the browser's own tab-mute UI cannot be toggled from JavaScript.
 
+The primary validation target is Cocos WebAudio output: Global Mute must remain silent even after interacting with the previously audible iframe, while unmuting must restore only the selected audio-master view.
+
 ## Sync Input status
 
 Cross-runtime Sync Input is intentionally **deferred** for now and is not exposed in the UI.
