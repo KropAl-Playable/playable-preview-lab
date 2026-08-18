@@ -11,7 +11,6 @@ export function buildInjectedBridge(device) {
   var contexts = [];
   var globallyMuted = false;
   var frameAudible = true;
-  var originalOpen = window.open;
 
   try { Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: function(){ return device.dpr; } }); } catch (_) {}
 
@@ -19,7 +18,38 @@ export function buildInjectedBridge(device) {
     try { parent.postMessage(Object.assign({ source: 'cgb-preview-frame', type: type }, payload || {}), parentOrigin); } catch (_) {}
   }
 
+  // AppLovin supplies mraid.js in the real ad container. GitHub Pages does not,
+  // so provide a minimal preview implementation before the playable bootstrap.
+  if (!window.mraid) {
+    var mraidListeners = {};
+    window.mraid = {
+      open: function(url){ post('CTA_ATTEMPT', { url: String(url || '') }); },
+      getState: function(){ return 'default'; },
+      getVersion: function(){ return '3.0-preview'; },
+      isViewable: function(){ return true; },
+      addEventListener: function(name, callback){
+        if (typeof callback !== 'function') return;
+        (mraidListeners[name] || (mraidListeners[name] = [])).push(callback);
+        if (name === 'ready') setTimeout(function(){ callback(); }, 0);
+        if (name === 'viewableChange') setTimeout(function(){ callback(true); }, 0);
+      },
+      removeEventListener: function(name, callback){
+        var list = mraidListeners[name] || [];
+        mraidListeners[name] = list.filter(function(item){ return item !== callback; });
+      }
+    };
+  }
+
   window.addEventListener('error', function(event) {
+    var target = event && event.target;
+    if (target && target !== window) {
+      var resourceUrl = target.src || target.href || '';
+      // mraid.js is intentionally provided by the network in production and by
+      // the preview stub above while validating on GitHub Pages.
+      if (/\/mraid\.js(?:[?#].*)?$/i.test(String(resourceUrl))) return;
+      post('FRAME_ERROR', { message: 'Resource failed to load: ' + String(resourceUrl || target.tagName || 'unknown resource') });
+      return;
+    }
     post('FRAME_ERROR', {
       message: event && event.message ? String(event.message) : 'Unknown frame error',
       file: event && event.filename ? String(event.filename) : '',
