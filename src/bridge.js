@@ -11,6 +11,8 @@ export function buildInjectedBridge(initialDevice) {
   var contexts = [];
   var globallyMuted = false;
   var frameAudible = true;
+  var muteEnforcer = 0;
+  var mediaMuteState = typeof WeakMap === 'function' ? new WeakMap() : null;
 
   function defineMetric(target, name, getter) {
     try { Object.defineProperty(target, name, { configurable: true, get: getter }); } catch (_) {}
@@ -67,7 +69,7 @@ export function buildInjectedBridge(initialDevice) {
     var target = event && event.target;
     if (target && target !== window) {
       var resourceUrl = target.src || target.href || '';
-      if (/\/mraid\.js(?:[?#].*)?$/i.test(String(resourceUrl))) return;
+      if (/\\/mraid\\.js(?:[?#].*)?$/i.test(String(resourceUrl))) return;
       post('FRAME_ERROR', { message: 'Resource failed to load: ' + String(resourceUrl || target.tagName || 'unknown resource') });
       return;
     }
@@ -86,13 +88,49 @@ export function buildInjectedBridge(initialDevice) {
   });
   post('BRIDGE_INSTALLED', { device: device });
 
-  function trackAudioContext(name) {
+  function shouldMuteAudio() {
+    return globallyMuted || !frameAudible;
+  }
+
+  function rememberContext(context) {
+    if (context && contexts.indexOf(context) < 0) contexts.push(context);
+    return context;
+  }
+
+  function patchAudioContext(name) {
     var Native = window[name];
-    if (typeof Native !== 'function') return;
+    if (typeof Native !== 'function' || !Native.prototype) return;
+
+    var proto = Native.prototype;
+    var nativeResume = typeof proto.resume === 'function' ? proto.resume : null;
+    var nativeSuspend = typeof proto.suspend === 'function' ? proto.suspend : null;
+
+    // Cocos/WebAudio commonly resumes its context again after every user gesture.
+    // Block that resume while the Preview Lab says this frame must stay muted.
+    if (nativeResume && !proto.__cgbPreviewResumePatched) {
+      try {
+        Object.defineProperty(proto, '__cgbPreviewResumePatched', { value: true, configurable: true });
+        proto.resume = function(){
+          rememberContext(this);
+          if (shouldMuteAudio()) {
+            try {
+              if (nativeSuspend && this.state !== 'suspended') nativeSuspend.call(this);
+            } catch (_) {}
+            return Promise.resolve();
+          }
+          return nativeResume.apply(this, arguments);
+        };
+      } catch (_) {}
+    }
+
     function WrappedAudioContext() {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
-      contexts.push(instance);
-      if (globallyMuted || !frameAudible) Promise.resolve(instance.suspend && instance.suspend()).catch(function(){});
+      rememberContext(instance);
+      if (shouldMuteAudio() && nativeSuspend) {
+        setTimeout(function(){
+          try { nativeSuspend.call(instance); } catch (_) {}
+        }, 0);
+      }
       return instance;
     }
     WrappedAudioContext.prototype = Native.prototype;
@@ -100,19 +138,84 @@ export function buildInjectedBridge(initialDevice) {
     try { window[name] = WrappedAudioContext; } catch (_) {}
   }
 
-  trackAudioContext('AudioContext');
-  trackAudioContext('webkitAudioContext');
+  patchAudioContext('AudioContext');
+  patchAudioContext('webkitAudioContext');
+
+  // Media-element based audio is less common in Cocos, but some playable wrappers
+  // or third-party code may use it. Force the current preview policy before play().
+  if (window.HTMLMediaElement && HTMLMediaElement.prototype) {
+    var nativePlay = HTMLMediaElement.prototype.play;
+    if (typeof nativePlay === 'function' && !HTMLMediaElement.prototype.__cgbPreviewPlayPatched) {
+      try {
+        Object.defineProperty(HTMLMediaElement.prototype, '__cgbPreviewPlayPatched', { value: true, configurable: true });
+        HTMLMediaElement.prototype.play = function(){
+          if (shouldMuteAudio()) {
+            try { this.muted = true; } catch (_) {}
+          }
+          return nativePlay.apply(this, arguments);
+        };
+      } catch (_) {}
+    }
+  }
+
+  function applyMediaMute(media, muted) {
+    try {
+      if (muted) {
+        if (mediaMuteState && !mediaMuteState.has(media)) mediaMuteState.set(media, !!media.muted);
+        media.muted = true;
+      } else if (mediaMuteState && mediaMuteState.has(media)) {
+        media.muted = !!mediaMuteState.get(media);
+        mediaMuteState.delete(media);
+      } else {
+        media.muted = false;
+      }
+    } catch (_) {}
+  }
 
   function applyMute() {
-    var shouldMute = globallyMuted || !frameAudible;
-    document.querySelectorAll('audio,video').forEach(function(media){ media.muted = shouldMute; });
-    contexts.forEach(function(ctx){
+    var shouldMute = shouldMuteAudio();
+    try {
+      document.querySelectorAll('audio,video').forEach(function(media){ applyMediaMute(media, shouldMute); });
+    } catch (_) {}
+
+    contexts.slice().forEach(function(ctx){
       try {
-        if (shouldMute && ctx.state !== 'suspended') Promise.resolve(ctx.suspend()).catch(function(){});
-        else if (!shouldMute && ctx.state === 'suspended') Promise.resolve(ctx.resume()).catch(function(){});
+        if (shouldMute) {
+          if (ctx.state !== 'suspended' && typeof ctx.suspend === 'function') Promise.resolve(ctx.suspend()).catch(function(){});
+        } else if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+          Promise.resolve(ctx.resume()).catch(function(){});
+        }
       } catch (_) {}
     });
   }
+
+  function updateMuteEnforcer() {
+    var shouldMute = shouldMuteAudio();
+    if (shouldMute && !muteEnforcer) {
+      // Defensive fallback for runtimes that create/resume audio outside the normal
+      // wrapped path. This runs only while a frame is intentionally muted.
+      muteEnforcer = setInterval(applyMute, 200);
+    } else if (!shouldMute && muteEnforcer) {
+      clearInterval(muteEnforcer);
+      muteEnforcer = 0;
+    }
+  }
+
+  function setMutePolicy(muted, audible) {
+    globallyMuted = !!muted;
+    frameAudible = !!audible;
+    applyMute();
+    updateMuteEnforcer();
+  }
+
+  // User activation is exactly when Cocos tends to resume WebAudio. Re-apply the
+  // policy after the current event dispatch so Global Mute cannot be undone by it.
+  ['pointerdown','mousedown','touchstart','keydown'].forEach(function(type){
+    window.addEventListener(type, function(){
+      if (!shouldMuteAudio()) return;
+      setTimeout(applyMute, 0);
+    }, true);
+  });
 
   function callBridge(method) {
     var cgb = window.cgb || window.super_html;
@@ -140,60 +243,30 @@ export function buildInjectedBridge(initialDevice) {
     return false;
   }
 
-  function synthesizeInput(message) {
-    var x = Math.max(0, Math.min(window.innerWidth - 1, message.x * window.innerWidth));
-    var y = Math.max(0, Math.min(window.innerHeight - 1, message.y * window.innerHeight));
-    var target = document.elementFromPoint(x, y) || document.querySelector('canvas') || document.body;
-    var init = {
-      bubbles: true, cancelable: true, composed: true,
-      clientX: x, clientY: y, screenX: x, screenY: y,
-      pointerId: message.pointerId || 1, pointerType: message.pointerType || 'mouse',
-      button: message.button || 0, buttons: message.buttons || (message.eventType === 'pointerup' ? 0 : 1),
-      pressure: message.eventType === 'pointerup' ? 0 : .5,
-      isPrimary: true
-    };
-    var event;
-    try { event = new PointerEvent(message.eventType, init); }
-    catch (_) { event = new MouseEvent(message.eventType.replace('pointer','mouse'), init); }
-    try { Object.defineProperty(event, '__cgbPreviewSynthetic', { value: true }); } catch (_) {}
-    target.dispatchEvent(event);
-  }
-
   window.addEventListener('message', function(event){
     var msg = event.data;
     if (!msg || msg.source !== 'cgb-preview-host') return;
-    if (msg.type === 'SET_MUTE') { globallyMuted = !!msg.muted; frameAudible = !!msg.audible; applyMute(); }
+    if (msg.type === 'SET_MUTE') setMutePolicy(msg.muted, msg.audible);
     else if (msg.type === 'SET_VIEWPORT') applyViewport(msg.device);
     else if (msg.type === 'COMMAND') {
       var ok = callBridge(msg.command);
       post('COMMAND_RESULT', { command: msg.command, ok: ok });
     }
-    else if (msg.type === 'SYNC_INPUT') synthesizeInput(msg);
-  });
-
-  ['pointerdown','pointermove','pointerup','pointercancel'].forEach(function(type){
-    window.addEventListener(type, function(event){
-      if (event.__cgbPreviewSynthetic) return;
-      if (!window.innerWidth || !window.innerHeight) return;
-      post('INPUT', {
-        eventType: type,
-        x: event.clientX / window.innerWidth,
-        y: event.clientY / window.innerHeight,
-        pointerId: event.pointerId || 1,
-        pointerType: event.pointerType || 'mouse',
-        button: event.button || 0,
-        buttons: event.buttons || 0
-      });
-    }, true);
   });
 
   window.addEventListener('load', function(){
     setTimeout(function(){
       applyMute();
+      updateMuteEnforcer();
       post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device });
     }, 0);
   });
-  window.${BRIDGE_ID} = { applyMute: applyMute, callBridge: callBridge, applyViewport: applyViewport };
+  window.${BRIDGE_ID} = {
+    applyMute: applyMute,
+    setMutePolicy: setMutePolicy,
+    callBridge: callBridge,
+    applyViewport: applyViewport
+  };
 })();
 </script>`;
 }
