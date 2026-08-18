@@ -58,8 +58,9 @@ A normal web page cannot control the browser's native **Mute tab** state or tab 
 
 The injected bridge:
 
-- suspends tracked Web Audio `AudioContext` instances;
-- blocks subsequent `AudioContext.resume()` calls while mute is active;
+- tracks Web Audio `AudioContext` instances created inside each iframe;
+- suspends them when the frame should be silent;
+- patches each context instance so later `resume()` calls from Cocos cannot bypass Global Mute;
 - mutes `<audio>` / `<video>` elements;
 - reapplies the mute policy after user-activation events, because Cocos and browsers commonly resume Web Audio after a click/touch;
 - periodically enforces the policy only while a frame is intentionally muted.
@@ -68,7 +69,7 @@ This is intended to make the visible Global Mute button behave like a practical 
 
 ## Sync Input status
 
-Cross-runtime Sync Input is intentionally **deferred** for now.
+Cross-runtime Sync Input is intentionally **deferred** for now and is not exposed in the UI.
 
 Synthetic DOM pointer-event mirroring is not reliable enough as a generic solution for independent Cocos runtimes: different projects and Cocos versions may consume mouse/touch/pointer input through different engine paths, and independent game loops can diverge even when DOM events are dispatched at similar times.
 
