@@ -34,8 +34,7 @@ The following operations do **not** restart existing playable runtimes:
 - switching between normal two-view device profiles;
 - changing Preview 1× / Device DPR;
 - browser window resize;
-- mute / audio-master changes;
-- Sync Input changes.
+- mute / audio-master changes.
 
 Existing runtime sessions receive a live viewport update through the injected Preview Bridge, followed by `resize` and `orientationchange` events.
 
@@ -46,13 +45,34 @@ Existing runtime sessions receive a live viewport update through the injected Pr
 - Focus any viewport without restarting it; the other runtimes remain alive below it.
 - `Preview 1×` mode by default to reduce GPU/render-target cost while preserving CSS viewport dimensions.
 - Optional `Device DPR` mode for DPR-sensitive validation.
-- Sync Input using normalized pointer coordinates. The viewport that receives a real pointer-down becomes `DRIVER` and mirrors subsequent input to the other active views.
 - Only one active view is audible at a time, plus a global page mute.
 - Global `Show Endcard` command (`window.cgb.gameEnd()` / `game_end()`).
 - Global `CTA download` command (`window.cgb.download()`) with store navigation intercepted in preview mode.
 - AppLovin-validator-style CTA confirmation banner.
 - Preview-frame runtime error relay into each device card.
 - Minimal preview `mraid` stub so AppLovin playables can run outside the ad-network container.
+
+## Global Mute
+
+A normal web page cannot control the browser's native **Mute tab** state or tab speaker icon. Preview Lab therefore implements the equivalent behavior inside every loaded runtime.
+
+The injected bridge:
+
+- suspends tracked Web Audio `AudioContext` instances;
+- blocks subsequent `AudioContext.resume()` calls while mute is active;
+- mutes `<audio>` / `<video>` elements;
+- reapplies the mute policy after user-activation events, because Cocos and browsers commonly resume Web Audio after a click/touch;
+- periodically enforces the policy only while a frame is intentionally muted.
+
+This is intended to make the visible Global Mute button behave like a practical tab-wide mute for the playable runtimes, even though the browser's own tab-mute UI cannot be toggled from JavaScript.
+
+## Sync Input status
+
+Cross-runtime Sync Input is intentionally **deferred** for now.
+
+Synthetic DOM pointer-event mirroring is not reliable enough as a generic solution for independent Cocos runtimes: different projects and Cocos versions may consume mouse/touch/pointer input through different engine paths, and independent game loops can diverge even when DOM events are dispatched at similar times.
+
+A future implementation should be Cocos-aware or expose an explicit Preview/QA input bridge from the playable itself instead of pretending generic DOM event replay is deterministic.
 
 ## Loading model
 
