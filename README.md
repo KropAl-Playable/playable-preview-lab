@@ -46,8 +46,8 @@ Existing runtime sessions receive a live viewport update through the injected Pr
 - `Preview 1×` mode by default to reduce GPU/render-target cost while preserving CSS viewport dimensions.
 - Optional `Device DPR` mode for DPR-sensitive validation.
 - Only one active view is audible at a time, plus a global page mute.
-- Global `Show Endcard` command (`window.cgb.gameEnd()` / `game_end()`).
-- Global `CTA download` command (`window.cgb.download()`) with store navigation intercepted in preview mode.
+- Global `CTA download` bridge test with store navigation intercepted in preview mode.
+- CTA URL validator with expected App Store / Google Play links and captured runtime URLs.
 - AppLovin-validator-style CTA confirmation banner.
 - Preview-frame runtime error relay into each device card.
 - Minimal preview `mraid` stub so AppLovin playables can run outside the ad-network container.
@@ -66,6 +66,32 @@ The injected bridge:
 - periodically enforces the policy only while a frame is intentionally muted.
 
 The primary validation target is Cocos WebAudio output: Global Mute must remain silent even after interacting with the previously audible iframe, while unmuting must restore only the selected audio-master view.
+
+## CTA URL validator
+
+`Show Endcard` is intentionally not part of Preview Lab. In CGB playables, gameplay completion normally notifies the packaged bridge that `gameEnd()` should be emitted; calling `window.cgb.gameEnd()` from the validator would test the opposite direction and would not reliably force the project's real endcard flow.
+
+CTA validation instead observes the paths that matter in production.
+
+Preview Bridge attempts to capture:
+
+- the URL argument passed by real gameplay code to `window.cgb.download(url)` / `window.super_html.download(url)`;
+- final store-open attempts through `window.open(...)`;
+- `mraid.open(...)`;
+- external `<a href>` navigation.
+
+The final navigation attempt has priority over the raw `download(url)` argument when both are available. This makes it possible to notice an adapter changing the destination URL.
+
+Enter the expected App Store and Google Play links in the validator fields. After a CTA is captured:
+
+- green `✓` means every captured URL for that store exactly matches the normalized expected URL;
+- red `✕` means at least one captured URL differs;
+- `Captured:` below the field shows the actual destination;
+- invalid expected URLs are shown as a warning state.
+
+The global `CTA download` button remains available as a bridge sanity check and calls `cgb.download()` in every active runtime. More importantly, the same observer also sees real `cgb.download(url)` calls caused by interacting with the playable's own CTA.
+
+Direct `location.href = ...` navigation is not reliably replaceable by a normal web page and is therefore not guaranteed to be captured. CGB/network-adapter paths using `download`, `window.open`, MRAID or anchors are the intended validation target.
 
 ## Sync Input status
 
@@ -112,4 +138,4 @@ This avoids uploading client playables anywhere and avoids browser restrictions 
 
 ## Preview bridge assumptions
 
-CGB Studio packer already exposes its packaged playable bridge through `window.cgb` / `window.super_html`. The validator calls this bridge for Endcard and CTA commands. Non-CGB HTML files can still be viewport-tested, but the global Endcard/CTA commands may be unavailable.
+CGB Studio packer exposes its packaged playable bridge through `window.cgb` / `window.super_html`. The validator observes this bridge for CTA calls and can invoke `download()` for the global CTA test. Non-CGB HTML files can still be viewport-tested, but CGB-specific CTA validation may be unavailable.
