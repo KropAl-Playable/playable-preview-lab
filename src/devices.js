@@ -2,8 +2,8 @@ function twoViewProfile(id, name, kind, width, height, dpr) {
   return {
     id, name, kind,
     views: [
-      { id: 'primary-portrait', label: 'Portrait', width, height, dpr, orientation: 'portrait' },
-      { id: 'primary-landscape', label: 'Landscape', width: height, height: width, dpr, orientation: 'landscape' },
+      { id: `${id}-portrait`, slot: 'primary-portrait', label: 'Portrait', width, height, dpr, orientation: 'portrait' },
+      { id: `${id}-landscape`, slot: 'primary-landscape', label: 'Landscape', width: height, height: width, dpr, orientation: 'landscape' },
     ],
   };
 }
@@ -27,13 +27,12 @@ export const DEVICE_PROFILES = [
     kind: 'foldable',
     note: 'Four-view QA profile: cover + main display. CSS viewport values are a preview approximation.',
     views: [
-      { id: 'primary-portrait', label: 'Folded · Portrait', width: 301, height: 772, dpr: 3, orientation: 'portrait', surface: 'cover' },
-      { id: 'primary-landscape', label: 'Folded · Landscape', width: 772, height: 301, dpr: 3, orientation: 'landscape', surface: 'cover' },
-      { id: 'secondary-portrait', label: 'Open · Portrait', width: 604, height: 725, dpr: 3, orientation: 'portrait', surface: 'main' },
-      { id: 'secondary-landscape', label: 'Open · Landscape', width: 725, height: 604, dpr: 3, orientation: 'landscape', surface: 'main' },
+      { id: 'galaxy-z-fold5-cover-portrait', slot: 'primary-portrait', label: 'Folded · Portrait', width: 301, height: 772, dpr: 3, orientation: 'portrait', surface: 'cover' },
+      { id: 'galaxy-z-fold5-cover-landscape', slot: 'primary-landscape', label: 'Folded · Landscape', width: 772, height: 301, dpr: 3, orientation: 'landscape', surface: 'cover' },
+      { id: 'galaxy-z-fold5-main-portrait', slot: 'secondary-portrait', label: 'Open · Portrait', width: 604, height: 725, dpr: 3, orientation: 'portrait', surface: 'main' },
+      { id: 'galaxy-z-fold5-main-landscape', slot: 'secondary-landscape', label: 'Open · Landscape', width: 725, height: 604, dpr: 3, orientation: 'landscape', surface: 'main' },
     ],
   },
 ];
 
-// Backwards-compatible alias while the preview lab is being refactored.
 export const DEVICES = DEVICE_PROFILES;
