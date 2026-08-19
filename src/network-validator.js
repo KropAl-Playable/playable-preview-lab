@@ -1,29 +1,11 @@
 export const NETWORK_PRESETS = [
-  {
-    id: 'generic',
-    name: 'Generic Preflight',
-    note: 'Engine/runtime sanity checks without a network-specific submission contract.',
-  },
-  {
-    id: 'applovin',
-    name: 'AppLovin',
-    note: 'Partial public-doc preflight: HTML/MRAID runtime checks. Not a replacement for AppLovin moderation.',
-  },
-  {
-    id: 'unity',
-    name: 'Unity Ads',
-    note: 'Published playable requirements: single inline HTML, under 5 MB, MRAID 3.0, both orientations, no required network requests, user-initiated store CTA through mraid.open().',
-  },
-  {
-    id: 'google-app',
-    name: 'Google App Campaigns',
-    note: 'Published HTML5/Playable upload checks. ZIP-only constraints are reported separately because Preview Lab currently loads a single HTML file.',
-  },
+  { id: 'generic', name: 'Generic Preflight', note: 'Engine/runtime sanity checks without a network-specific submission contract.' },
+  { id: 'applovin', name: 'AppLovin', note: 'Partial public-doc preflight: HTML/MRAID runtime checks. Not a replacement for AppLovin moderation.' },
+  { id: 'unity', name: 'Unity Ads', note: 'Published playable requirements: single inline HTML, under 5 MB, MRAID 3.0, both orientations, no required network requests, user-initiated store CTA through mraid.open().' },
+  { id: 'google-app', name: 'Google App Campaigns', note: 'Published HTML5/Playable upload checks. ZIP-only constraints are reported separately because Preview Lab currently loads a single HTML file.' },
 ];
 
-function result(id, label, status, detail, group = 'Static') {
-  return { id, label, status, detail, group };
-}
+function result(id, label, status, detail, group = 'Static') { return { id, label, status, detail, group }; }
 
 function extractAssetReferences(html) {
   const references = [];
@@ -35,12 +17,21 @@ function extractAssetReferences(html) {
   return [...new Set(references.map((value) => String(value).trim()).filter(Boolean))];
 }
 
-function isEmbeddedReference(value) {
-  return /^(?:data:|blob:|about:|javascript:|#)/i.test(value);
-}
+function isEmbeddedReference(value) { return /^(?:data:|blob:|about:|javascript:|#)/i.test(value); }
+function isAbsoluteNetworkReference(value) { return /^(?:https?:)?\/\//i.test(value); }
 
-function isAbsoluteNetworkReference(value) {
-  return /^(?:https?:)?\/\//i.test(value);
+function runtimeExternalEvents(events) {
+  return (events || []).filter((event) => {
+    const raw = String(event.url || '').trim();
+    if (!raw || isEmbeddedReference(raw)) return false;
+    try {
+      const url = new URL(raw, window.location.href);
+      if (!/^https?:$/.test(url.protocol)) return false;
+      return url.origin !== window.location.origin;
+    } catch (_) {
+      return false;
+    }
+  });
 }
 
 function allowedGoogleExternal(value) {
@@ -48,9 +39,7 @@ function allowedGoogleExternal(value) {
     const url = new URL(value, window.location.href);
     const host = url.hostname.toLowerCase();
     return host === 'fonts.googleapis.com' || host === 'fonts.gstatic.com' || host === 'ajax.googleapis.com' || host.endsWith('.gstatic.com');
-  } catch (_) {
-    return false;
-  }
+  } catch (_) { return false; }
 }
 
 function hasOrientationMeta(html) {
@@ -71,20 +60,19 @@ function commonChecks(context) {
   const html = context.html || '';
   const sessions = context.sessions || [];
   const errors = sessions.filter((session) => session.error);
-  const checks = [
+  return [
     result('doctype', 'DOCTYPE', /<!doctype\s+html/i.test(html) ? 'pass' : 'warn', /<!doctype\s+html/i.test(html) ? '<!DOCTYPE html> detected.' : 'No HTML doctype detected.'),
     result('html-tag', '<html> tag', /<html\b/i.test(html) ? 'pass' : 'fail', /<html\b/i.test(html) ? 'Present.' : 'Missing <html> tag.'),
     result('body-tag', '<body> tag', /<body\b/i.test(html) ? 'pass' : 'fail', /<body\b/i.test(html) ? 'Present.' : 'Missing <body> tag.'),
     result('runtime-errors', 'Runtime errors', errors.length ? 'fail' : sessions.length ? 'pass' : 'warn', errors.length ? `${errors.length} preview runtime(s) reported an error.` : sessions.length ? `No errors reported by ${sessions.length} active runtime(s).` : 'Load the playable to collect runtime errors.', 'Runtime'),
   ];
-  return checks;
 }
 
 function unityChecks(context) {
   const html = context.html || '';
   const refs = extractAssetReferences(html).filter((value) => !isEmbeddedReference(value));
   const ctaEvents = context.ctaEvents || [];
-  const networkEvents = context.networkEvents || [];
+  const networkEvents = runtimeExternalEvents(context.networkEvents);
   const finalCtas = ctaEvents.filter((event) => event.type === 'attempt');
   const realFinalCtas = finalCtas.filter((event) => !event.previewCommand);
   const nonMraid = realFinalCtas.filter((event) => event.via !== 'mraid.open');
@@ -97,7 +85,7 @@ function unityChecks(context) {
     result('unity-inline', 'Single inline HTML', refs.length ? 'fail' : 'pass', refs.length ? `${refs.length} non-inline asset reference(s) found. First: ${refs[0]}` : 'No non-inline asset references found.'),
     result('unity-mraid', 'MRAID usage', hasMraidUsage ? 'pass' : 'warn', hasMraidUsage ? 'MRAID usage detected in the creative.' : 'No static mraid.* usage detected. Obfuscation may hide it; validate CTA at runtime.'),
     result('unity-orientation', 'Portrait + landscape', orientation && /portrait/.test(orientation.value) && /landscape/.test(orientation.value) ? 'pass' : 'warn', orientation ? `Orientation metadata: ${orientation.value}. Unity requires both orientations; also verify both live views.` : 'No dual-orientation metadata detected. Verify both live views manually.'),
-    result('unity-network', 'No required network requests', networkEvents.length ? 'warn' : 'pass', networkEvents.length ? `${networkEvents.length} runtime network request(s) observed. Unity permits limited analytics but the playable must not require network resources.` : 'No fetch/XHR/WebSocket requests observed in the current runtime passes.', 'Runtime'),
+    result('unity-network', 'No required network requests', networkEvents.length ? 'warn' : 'pass', networkEvents.length ? `${networkEvents.length} external runtime fetch/XHR request(s) observed. Unity permits limited analytics but the playable must not require network resources. First: ${networkEvents[0].url}` : 'No external fetch/XHR requests observed in the current runtime passes.', 'Runtime'),
     result('unity-cta-api', 'CTA uses mraid.open()', !realFinalCtas.length ? 'warn' : nonMraid.length ? 'fail' : 'pass', !realFinalCtas.length ? 'No real gameplay CTA captured yet.' : nonMraid.length ? `${nonMraid.length} final CTA attempt(s) did not use mraid.open().` : 'Captured gameplay CTA attempts used mraid.open().', 'Runtime'),
     result('unity-no-auto-redirect', 'No automatic store redirect', autoRedirect.length ? 'fail' : 'pass', autoRedirect.length ? `${autoRedirect.length} store-open attempt(s) occurred without a recent user gesture.` : 'No non-user-initiated gameplay store redirect observed.', 'Runtime'),
     result('unity-viewable', 'Wait for MRAID viewableChange', 'manual', 'Generic Preview Lab cannot reliably determine when gameplay visually starts. Treat this as a manual/integration check.', 'Runtime'),
@@ -109,11 +97,9 @@ function googleChecks(context) {
   const refs = extractAssetReferences(html).filter((value) => isAbsoluteNetworkReference(value));
   const disallowed = refs.filter((value) => !allowedGoogleExternal(value));
   const orientation = hasOrientationMeta(html);
-  const orientationOkay = orientation && (
-    orientation.kind === 'orientation'
-      ? /portrait|landscape/.test(orientation.value)
-      : /width\s*=\s*(?:320|480)\s*,\s*height\s*=\s*(?:480|320)/.test(orientation.value)
-  );
+  const orientationOkay = orientation && (orientation.kind === 'orientation'
+    ? /portrait|landscape/.test(orientation.value)
+    : /width\s*=\s*(?:320|480)\s*,\s*height\s*=\s*(?:480|320)/.test(orientation.value));
 
   return [
     result('google-size', 'Asset size ≤ 5 MB', context.fileSize <= 5_000_000 ? 'pass' : 'fail', `${formatBytes(context.fileSize)} loaded. Google documents a maximum 5 MB ZIP for App Campaign HTML5/Playable assets.`),
@@ -153,6 +139,5 @@ export function runNetworkValidation(context) {
     summary[check.status] = (summary[check.status] || 0) + 1;
     return summary;
   }, { pass: 0, warn: 0, fail: 0, manual: 0 });
-
   return { preset, checks, score };
 }
