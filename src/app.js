@@ -5,16 +5,29 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   fileInput: $('#fileInput'), reload: $('#reloadButton'), dropZone: $('#dropZone'), stage: $('#previewStage'),
   device: $('#deviceSelect'), previewDpr: $('#previewDprButton'), deviceDpr: $('#deviceDprButton'),
-  clearFocus: $('#clearFocusButton'), mute: $('#muteButton'), endcard: $('#endcardButton'), cta: $('#ctaButton'),
+  clearFocus: $('#clearFocusButton'), mute: $('#muteButton'), cta: $('#ctaButton'),
+  appStoreField: $('#appStoreField'), appStoreUrl: $('#appStoreUrl'), appStoreMark: $('#appStoreMark'), appStoreActual: $('#appStoreActual'),
+  googlePlayField: $('#googlePlayField'), googlePlayUrl: $('#googlePlayUrl'), googlePlayMark: $('#googlePlayMark'), googlePlayActual: $('#googlePlayActual'),
+  ctaStatus: $('#ctaStatus'),
   sourceInfo: $('#sourceInfo'), sourceName: $('#sourceName'), sourceSize: $('#sourceSize'), profileInfo: $('#profileInfo'),
   bridgeStatus: $('#bridgeStatus'), template: $('#deviceTemplate'),
 };
+
+function makeCaptureBucket() {
+  return { call: new Set(), attempt: new Set() };
+}
 
 const state = {
   sourceHtml: '', fileName: '', fileSize: 0,
   selectedProfileId: 'iphone-13', dprMode: 'preview',
   muted: false, audioMasterId: null, focusedId: null,
   sessions: new Map(),
+  ctaCaptures: {
+    appStore: makeCaptureBucket(),
+    googlePlay: makeCaptureBucket(),
+    other: makeCaptureBucket(),
+  },
+  ctaTestTimer: 0,
 };
 
 for (const profile of DEVICE_PROFILES) {
@@ -248,17 +261,151 @@ function updateGlobalBridgeStatus() {
   }
 }
 
-function showCtaBanners() {
-  for (const session of state.sessions.values()) {
-    session.banner.classList.add('visible');
-    clearTimeout(session.banner.__hideTimer);
-    session.banner.__hideTimer = setTimeout(() => session.banner.classList.remove('visible'), 2400);
+function showCtaBanner(session) {
+  if (!session) return;
+  session.banner.classList.add('visible');
+  clearTimeout(session.banner.__hideTimer);
+  session.banner.__hideTimer = setTimeout(() => session.banner.classList.remove('visible'), 2400);
+}
+
+function normalizeUrl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    parsed.hostname = parsed.hostname.toLowerCase();
+    return parsed.href;
+  } catch (_) {
+    return value;
   }
 }
 
-function sendCommand(command) {
-  for (const session of state.sessions.values()) postFrame(session.frame, { type: 'COMMAND', command });
-  if (command === 'download') showCtaBanners();
+function classifyStoreUrl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return 'other';
+  try {
+    const parsed = new URL(value);
+    const protocol = parsed.protocol.toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    if (protocol === 'itms-apps:' || protocol === 'itms:' || host === 'apps.apple.com' || host.endsWith('.apps.apple.com') || host === 'itunes.apple.com' || host.endsWith('.itunes.apple.com') || host === 'appsto.re') return 'appStore';
+    if (protocol === 'market:' || host === 'play.google.com' || host.endsWith('.play.google.com')) return 'googlePlay';
+  } catch (_) {}
+  return 'other';
+}
+
+function effectiveCapturedUrls(store) {
+  const bucket = state.ctaCaptures[store];
+  if (!bucket) return [];
+  const preferred = bucket.attempt.size ? bucket.attempt : bucket.call;
+  return [...preferred];
+}
+
+function setFieldValidation(store, field, input, mark, actualLabel) {
+  const expectedRaw = input.value.trim();
+  const captured = effectiveCapturedUrls(store);
+  const display = captured.length
+    ? captured.length === 1 ? captured[0] : `${captured[0]} (+${captured.length - 1} more)`
+    : '—';
+  actualLabel.textContent = `Captured: ${display}`;
+  actualLabel.title = captured.join('\n');
+
+  if (!expectedRaw) {
+    field.dataset.state = 'neutral';
+    mark.textContent = '—';
+    mark.title = 'Enter the expected store URL to validate captured CTA attempts.';
+    return;
+  }
+
+  let expected;
+  try { expected = new URL(expectedRaw); }
+  catch (_) {
+    field.dataset.state = 'invalid';
+    mark.textContent = '!';
+    mark.title = 'Expected URL is not a valid absolute URL.';
+    return;
+  }
+
+  if (!captured.length) {
+    field.dataset.state = 'neutral';
+    mark.textContent = '…';
+    mark.title = 'Expected URL is valid. Waiting for a CTA attempt.';
+    return;
+  }
+
+  const expectedNormalized = normalizeUrl(expected.href);
+  const matches = captured.every((url) => normalizeUrl(url) === expectedNormalized);
+  field.dataset.state = matches ? 'match' : 'mismatch';
+  mark.textContent = matches ? '✓' : '✕';
+  mark.title = matches ? 'Captured CTA URL matches the expected link.' : 'Captured CTA URL does not match the expected link.';
+}
+
+function updateCtaValidation() {
+  setFieldValidation('appStore', elements.appStoreField, elements.appStoreUrl, elements.appStoreMark, elements.appStoreActual);
+  setFieldValidation('googlePlay', elements.googlePlayField, elements.googlePlayUrl, elements.googlePlayMark, elements.googlePlayActual);
+
+  const appUrls = effectiveCapturedUrls('appStore');
+  const playUrls = effectiveCapturedUrls('googlePlay');
+  const otherUrls = effectiveCapturedUrls('other');
+  const total = appUrls.length + playUrls.length + otherUrls.length;
+
+  if (!total) {
+    if (!elements.ctaStatus.classList.contains('testing')) elements.ctaStatus.textContent = 'No CTA captured yet.';
+    return;
+  }
+
+  elements.ctaStatus.classList.remove('testing');
+  if (otherUrls.length) {
+    elements.ctaStatus.textContent = `Captured ${total} unique CTA URL${total === 1 ? '' : 's'} · ${otherUrls.length} unrecognized store URL${otherUrls.length === 1 ? '' : 's'}.`;
+    elements.ctaStatus.title = otherUrls.join('\n');
+  } else {
+    elements.ctaStatus.textContent = `Captured ${total} unique store URL${total === 1 ? '' : 's'}.`;
+    elements.ctaStatus.title = [...appUrls, ...playUrls].join('\n');
+  }
+}
+
+function resetCtaCaptures({ testing = false } = {}) {
+  clearTimeout(state.ctaTestTimer);
+  state.ctaCaptures = {
+    appStore: makeCaptureBucket(),
+    googlePlay: makeCaptureBucket(),
+    other: makeCaptureBucket(),
+  };
+  elements.ctaStatus.classList.toggle('testing', testing);
+  elements.ctaStatus.textContent = testing ? 'Calling cgb.download() and waiting for a store URL…' : 'No CTA captured yet.';
+  elements.ctaStatus.title = '';
+  updateCtaValidation();
+}
+
+function recordCta(url, sourceType, session) {
+  const cleanUrl = String(url || '').trim();
+  if (!cleanUrl) {
+    elements.ctaStatus.classList.remove('testing');
+    elements.ctaStatus.textContent = 'CTA was invoked, but the captured URL was empty.';
+    return;
+  }
+  clearTimeout(state.ctaTestTimer);
+  const store = classifyStoreUrl(cleanUrl);
+  const bucket = state.ctaCaptures[store] || state.ctaCaptures.other;
+  bucket[sourceType === 'call' ? 'call' : 'attempt'].add(cleanUrl);
+  showCtaBanner(session);
+  updateCtaValidation();
+}
+
+function testCtaDownload() {
+  resetCtaCaptures({ testing: true });
+  for (const session of state.sessions.values()) {
+    postFrame(session.frame, { type: 'COMMAND', command: 'download' });
+  }
+  state.ctaTestTimer = setTimeout(() => {
+    const total = ['appStore', 'googlePlay', 'other'].reduce((sum, store) => {
+      const bucket = state.ctaCaptures[store];
+      return sum + bucket.call.size + bucket.attempt.size;
+    }, 0);
+    if (!total) {
+      elements.ctaStatus.classList.remove('testing');
+      elements.ctaStatus.textContent = 'cgb.download() was called, but no URL was captured.';
+    }
+  }, 700);
 }
 
 async function loadFile(file) {
@@ -272,12 +419,16 @@ async function loadFile(file) {
   elements.sourceSize.textContent = formatBytes(file.size);
   elements.bridgeStatus.textContent = 'Bridge: waiting';
   elements.bridgeStatus.className = 'status neutral';
-  [elements.reload, elements.mute, elements.endcard, elements.cta].forEach((button) => button.disabled = false);
+  [elements.reload, elements.mute, elements.cta].forEach((button) => button.disabled = false);
+  resetCtaCaptures();
   syncSessionsToProfile({ restart: true });
 }
 
 elements.fileInput.addEventListener('change', () => loadFile(elements.fileInput.files?.[0]));
-elements.reload.addEventListener('click', () => syncSessionsToProfile({ restart: true }));
+elements.reload.addEventListener('click', () => {
+  resetCtaCaptures();
+  syncSessionsToProfile({ restart: true });
+});
 elements.device.addEventListener('change', () => {
   state.selectedProfileId = elements.device.value;
   syncSessionsToProfile();
@@ -296,8 +447,9 @@ elements.deviceDpr.addEventListener('click', () => {
 });
 elements.clearFocus.addEventListener('click', () => { state.focusedId = null; updateFocusLayout(); });
 elements.mute.addEventListener('click', () => { state.muted = !state.muted; updateAudio(); });
-elements.endcard.addEventListener('click', () => sendCommand('gameEnd'));
-elements.cta.addEventListener('click', () => sendCommand('download'));
+elements.cta.addEventListener('click', testCtaDownload);
+elements.appStoreUrl.addEventListener('input', updateCtaValidation);
+elements.googlePlayUrl.addEventListener('input', updateCtaValidation);
 
 for (const eventName of ['dragenter', 'dragover']) {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -338,8 +490,10 @@ window.addEventListener('message', (event) => {
     session.status.textContent = `${session.error}${location}`;
     session.status.title = `${session.error}${message.file ? `\n${message.file}` : ''}${location}`;
     updateGlobalBridgeStatus();
+  } else if (message.type === 'CTA_CALL') {
+    recordCta(message.url, 'call', session);
   } else if (message.type === 'CTA_ATTEMPT') {
-    showCtaBanners();
+    recordCta(message.url, 'attempt', session);
   }
 });
 
@@ -350,3 +504,4 @@ window.addEventListener('resize', () => {
 });
 
 updateProfileInfo();
+updateCtaValidation();
