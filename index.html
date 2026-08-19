@@ -41,6 +41,15 @@
       </label>
 
       <div class="control-group">
+        <span class="control-label">Platform</span>
+        <div class="segmented" role="group" aria-label="Platform emulation">
+          <button id="hostPlatformButton" class="active" title="Use the browser's real navigator/user-agent values">Host</button>
+          <button id="iosPlatformButton" title="Restart runtimes with iOS-like navigator/user-agent values">iOS</button>
+          <button id="androidPlatformButton" title="Restart runtimes with Android-like navigator/user-agent values">Android</button>
+        </div>
+      </div>
+
+      <div class="control-group">
         <span class="control-label">Render DPR</span>
         <div class="segmented" role="group" aria-label="Render DPR">
           <button id="previewDprButton" class="active" title="Use DPR 1 for lower GPU load while preserving CSS viewport dimensions">Preview 1×</button>
@@ -57,7 +66,7 @@
     <section class="cta-validator panel" aria-label="CTA URL validator">
       <div class="cta-validator-copy">
         <span class="control-label">CTA URL validator</span>
-        <span class="cta-validator-hint">Enter the expected store links. Preview Lab captures real <code>cgb.download(url)</code> / store-open attempts from the playable.</span>
+        <span class="cta-validator-hint">Enter expected store links. Use iOS / Android emulation to exercise platform-specific CTA branches. Changing platform intentionally restarts the runtimes.</span>
       </div>
 
       <div class="cta-validator-fields">
