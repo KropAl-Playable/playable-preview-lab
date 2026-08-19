@@ -21,6 +21,8 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   var muteEnforcer = 0;
   var mediaMuteState = typeof WeakMap === 'function' ? new WeakMap() : null;
   var cgbPatchTimer = 0;
+  var lastUserGestureAt = 0;
+  var previewCommandActive = false;
 
   function defineMetric(target, name, getter) {
     try { Object.defineProperty(target, name, { configurable: true, get: getter }); } catch (_) {}
@@ -60,10 +62,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
         mobile: true,
         platform: 'Android',
         getHighEntropyValues: function(){
-          return Promise.resolve({
-            architecture: 'arm', bitness: '64', model: 'Pixel 7', mobile: true,
-            platform: 'Android', platformVersion: '14.0.0', uaFullVersion: '120.0.0.0'
-          });
+          return Promise.resolve({ architecture: 'arm', bitness: '64', model: 'Pixel 7', mobile: true, platform: 'Android', platformVersion: '14.0.0', uaFullVersion: '120.0.0.0' });
         },
         toJSON: function(){ return { brands: this.brands, mobile: true, platform: 'Android' }; }
       };
@@ -86,6 +85,33 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     }
   }
 
+  function reportNetwork(kind, value) {
+    var url = '';
+    try { url = typeof value === 'string' ? value : value && value.url ? String(value.url) : String(value || ''); } catch (_) {}
+    if (!url) return;
+    post('NETWORK_REQUEST', { kind: kind, url: url, platform: platformMode });
+  }
+
+  if (typeof window.fetch === 'function') {
+    var nativeFetch = window.fetch;
+    try {
+      window.fetch = function(input){
+        reportNetwork('fetch', input);
+        return nativeFetch.apply(this, arguments);
+      };
+    } catch (_) {}
+  }
+
+  if (window.XMLHttpRequest && XMLHttpRequest.prototype && typeof XMLHttpRequest.prototype.open === 'function') {
+    var nativeXhrOpen = XMLHttpRequest.prototype.open;
+    try {
+      XMLHttpRequest.prototype.open = function(method, url){
+        reportNetwork('xhr', url);
+        return nativeXhrOpen.apply(this, arguments);
+      };
+    } catch (_) {}
+  }
+
   function applyViewport(next) {
     if (!next) return;
     var previousOrientation = device.orientation || (device.width >= device.height ? 'landscape' : 'portrait');
@@ -93,12 +119,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     var nextHeight = Number(next.height) || device.height;
     var nextOrientation = next.orientation || (nextWidth >= nextHeight ? 'landscape' : 'portrait');
     var orientationChanged = nextOrientation !== previousOrientation;
-    device = {
-      width: nextWidth,
-      height: nextHeight,
-      dpr: Number(next.dpr) || 1,
-      orientation: nextOrientation
-    };
+    device = { width: nextWidth, height: nextHeight, dpr: Number(next.dpr) || 1, orientation: nextOrientation };
     requestAnimationFrame(function(){
       try { window.dispatchEvent(new Event('resize')); } catch (_) {}
       if (orientationChanged) {
@@ -116,7 +137,13 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   function reportCta(type, url, via) {
     var clean = navigationUrl(url);
     if (!clean) return;
-    post(type, { url: clean, via: via || '', platform: platformMode });
+    post(type, {
+      url: clean,
+      via: via || '',
+      platform: platformMode,
+      userInitiated: Date.now() - lastUserGestureAt <= 1500,
+      previewCommand: previewCommandActive
+    });
   }
 
   try {
@@ -176,27 +203,18 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   }, true);
   window.addEventListener('unhandledrejection', function(event) {
     var reason = event && event.reason;
-    post('FRAME_REJECTION', {
-      message: reason && reason.message ? String(reason.message) : String(reason || 'Unhandled promise rejection')
-    });
+    post('FRAME_REJECTION', { message: reason && reason.message ? String(reason.message) : String(reason || 'Unhandled promise rejection') });
   });
   post('BRIDGE_INSTALLED', { device: device, platform: platformMode });
 
-  function shouldMuteAudio() {
-    return globallyMuted || !frameAudible;
-  }
-
-  function rememberContext(context) {
-    if (context && contexts.indexOf(context) < 0) contexts.push(context);
-    return context;
-  }
+  function shouldMuteAudio() { return globallyMuted || !frameAudible; }
+  function rememberContext(context) { if (context && contexts.indexOf(context) < 0) contexts.push(context); return context; }
 
   function patchAudioContext(name) {
     var Native = window[name];
     if (typeof Native !== 'function' || !Native.prototype) return;
     var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
     var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
-
     function WrappedAudioContext() {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
       rememberContext(instance);
@@ -205,20 +223,14 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
           instance.resume = function(){
             rememberContext(instance);
             if (shouldMuteAudio()) {
-              try {
-                if (nativeSuspend && instance.state !== 'suspended') nativeSuspend.call(instance);
-              } catch (_) {}
+              try { if (nativeSuspend && instance.state !== 'suspended') nativeSuspend.call(instance); } catch (_) {}
               return Promise.resolve();
             }
             return nativeResume.apply(instance, arguments);
           };
         } catch (_) {}
       }
-      if (shouldMuteAudio() && nativeSuspend) {
-        setTimeout(function(){
-          try { nativeSuspend.call(instance); } catch (_) {}
-        }, 0);
-      }
+      if (shouldMuteAudio() && nativeSuspend) setTimeout(function(){ try { nativeSuspend.call(instance); } catch (_) {} }, 0);
       return instance;
     }
     WrappedAudioContext.prototype = Native.prototype;
@@ -235,9 +247,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
       try {
         Object.defineProperty(HTMLMediaElement.prototype, '__cgbPreviewPlayPatched', { value: true, configurable: true });
         HTMLMediaElement.prototype.play = function(){
-          if (shouldMuteAudio()) {
-            try { this.muted = true; } catch (_) {}
-          }
+          if (shouldMuteAudio()) { try { this.muted = true; } catch (_) {} }
           return nativePlay.apply(this, arguments);
         };
       } catch (_) {}
@@ -252,36 +262,26 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
       } else if (mediaMuteState && mediaMuteState.has(media)) {
         media.muted = !!mediaMuteState.get(media);
         mediaMuteState.delete(media);
-      } else {
-        media.muted = false;
-      }
+      } else media.muted = false;
     } catch (_) {}
   }
 
   function applyMute() {
     var shouldMute = shouldMuteAudio();
-    try {
-      document.querySelectorAll('audio,video').forEach(function(media){ applyMediaMute(media, shouldMute); });
-    } catch (_) {}
+    try { document.querySelectorAll('audio,video').forEach(function(media){ applyMediaMute(media, shouldMute); }); } catch (_) {}
     contexts.slice().forEach(function(ctx){
       try {
         if (shouldMute) {
           if (ctx.state !== 'suspended' && typeof ctx.suspend === 'function') Promise.resolve(ctx.suspend()).catch(function(){});
-        } else if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
-          Promise.resolve(ctx.resume()).catch(function(){});
-        }
+        } else if (ctx.state === 'suspended' && typeof ctx.resume === 'function') Promise.resolve(ctx.resume()).catch(function(){});
       } catch (_) {}
     });
   }
 
   function updateMuteEnforcer() {
     var shouldMute = shouldMuteAudio();
-    if (shouldMute && !muteEnforcer) {
-      muteEnforcer = setInterval(applyMute, 200);
-    } else if (!shouldMute && muteEnforcer) {
-      clearInterval(muteEnforcer);
-      muteEnforcer = 0;
-    }
+    if (shouldMute && !muteEnforcer) muteEnforcer = setInterval(applyMute, 200);
+    else if (!shouldMute && muteEnforcer) { clearInterval(muteEnforcer); muteEnforcer = 0; }
   }
 
   function setMutePolicy(muted, audible) {
@@ -293,8 +293,8 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
 
   ['pointerdown','mousedown','touchstart','keydown'].forEach(function(type){
     window.addEventListener(type, function(){
-      if (!shouldMuteAudio()) return;
-      setTimeout(applyMute, 0);
+      lastUserGestureAt = Date.now();
+      if (shouldMuteAudio()) setTimeout(applyMute, 0);
     }, true);
   });
 
@@ -331,19 +331,19 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     var cgb = window.cgb || window.super_html;
     if (!cgb || typeof cgb.download !== 'function') return false;
     try {
+      previewCommandActive = true;
       cgb.download();
       return true;
     } catch (error) {
       post('FRAME_ERROR', { message: 'CTA download failed: ' + String(error && error.message ? error.message : error) });
       return false;
+    } finally {
+      setTimeout(function(){ previewCommandActive = false; }, 0);
     }
   }
 
   cgbPatchTimer = setInterval(function(){
-    if (patchCgbDownload()) {
-      clearInterval(cgbPatchTimer);
-      cgbPatchTimer = 0;
-    }
+    if (patchCgbDownload()) { clearInterval(cgbPatchTimer); cgbPatchTimer = 0; }
   }, 200);
 
   window.addEventListener('message', function(event){
@@ -365,14 +365,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
       post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device, platform: platformMode });
     }, 0);
   });
-  window.${BRIDGE_ID} = {
-    applyMute: applyMute,
-    setMutePolicy: setMutePolicy,
-    callDownload: callDownload,
-    patchCgbDownload: patchCgbDownload,
-    applyViewport: applyViewport,
-    platform: platformMode
-  };
+  window.${BRIDGE_ID} = { applyMute: applyMute, setMutePolicy: setMutePolicy, callDownload: callDownload, patchCgbDownload: patchCgbDownload, applyViewport: applyViewport, platform: platformMode };
 })();
 </script>`;
 }
@@ -387,11 +380,8 @@ export function injectPreviewBridge(html, device, options = {}) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  const base = !hasBase && safeBaseHref
-    ? `<base data-cgb-preview-base href="${safeBaseHref}">`
-    : '';
+  const base = !hasBase && safeBaseHref ? `<base data-cgb-preview-base href="${safeBaseHref}">` : '';
   const injection = base + bridge;
-
   const headMatch = html.match(/<head(?:\s[^>]*)?>/i);
   if (headMatch && headMatch.index != null) {
     const insertAt = headMatch.index + headMatch[0].length;
