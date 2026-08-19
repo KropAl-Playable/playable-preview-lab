@@ -13,6 +13,7 @@ export function buildInjectedBridge(initialDevice) {
   var frameAudible = true;
   var muteEnforcer = 0;
   var mediaMuteState = typeof WeakMap === 'function' ? new WeakMap() : null;
+  var cgbPatchTimer = 0;
 
   function defineMetric(target, name, getter) {
     try { Object.defineProperty(target, name, { configurable: true, get: getter }); } catch (_) {}
@@ -43,12 +44,49 @@ export function buildInjectedBridge(initialDevice) {
     });
   }
 
+  function navigationUrl(value) {
+    var url = String(value || '').trim();
+    return /^(?:https?:|market:|itms:|itms-apps:)/i.test(url) ? url : '';
+  }
+
+  function reportCta(type, url, via) {
+    var clean = navigationUrl(url);
+    if (!clean) return;
+    post(type, { url: clean, via: via || '' });
+  }
+
+  // Preview pages must never leave the validator when a playable opens a store.
+  // Keep window.open permanently intercepted and report the attempted destination.
+  var nativeWindowOpen = window.open;
+  try {
+    window.open = function(url){
+      reportCta('CTA_ATTEMPT', url, 'window.open');
+      return null;
+    };
+  } catch (_) {}
+
+  // Programmatic and user-triggered anchor navigation is also captured. This does
+  // not catch direct location.href assignments, which browsers do not expose as a
+  // reliably replaceable API, but covers the common CGB/network-adapter paths.
+  document.addEventListener('click', function(event){
+    var target = event && event.target;
+    if (!target) return;
+    var anchor = null;
+    try { anchor = target.closest ? target.closest('a[href]') : null; } catch (_) {}
+    if (!anchor) return;
+    var href = navigationUrl(anchor.href || anchor.getAttribute('href'));
+    if (!href) return;
+    event.preventDefault();
+    try { event.stopImmediatePropagation(); } catch (_) {}
+    reportCta('CTA_ATTEMPT', href, 'anchor');
+  }, true);
+
   // AppLovin supplies mraid.js in the real ad container. GitHub Pages does not,
   // so provide a minimal preview implementation before the playable bootstrap.
   if (!window.mraid) {
     var mraidListeners = {};
     window.mraid = {
-      open: function(url){ post('CTA_ATTEMPT', { url: String(url || '') }); },
+      open: function(url){ reportCta('CTA_ATTEMPT', url, 'mraid.open'); },
       getState: function(){ return 'default'; },
       getVersion: function(){ return '3.0-preview'; },
       isViewable: function(){ return true; },
@@ -107,8 +145,6 @@ export function buildInjectedBridge(initialDevice) {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
       rememberContext(instance);
 
-      // Patch the instance rather than the browser-shared prototype. Each iframe
-      // must enforce its own audible/muted policy independently.
       if (nativeResume) {
         try {
           instance.resume = function(){
@@ -139,8 +175,6 @@ export function buildInjectedBridge(initialDevice) {
   patchAudioContext('AudioContext');
   patchAudioContext('webkitAudioContext');
 
-  // Media-element based audio is less common in Cocos, but some playable wrappers
-  // or third-party code may use it. Force the current preview policy before play().
   if (window.HTMLMediaElement && HTMLMediaElement.prototype) {
     var nativePlay = HTMLMediaElement.prototype.play;
     if (typeof nativePlay === 'function' && !HTMLMediaElement.prototype.__cgbPreviewPlayPatched) {
@@ -190,8 +224,6 @@ export function buildInjectedBridge(initialDevice) {
   function updateMuteEnforcer() {
     var shouldMute = shouldMuteAudio();
     if (shouldMute && !muteEnforcer) {
-      // Defensive fallback for runtimes that create/resume audio outside the normal
-      // wrapped path. This runs only while a frame is intentionally muted.
       muteEnforcer = setInterval(applyMute, 200);
     } else if (!shouldMute && muteEnforcer) {
       clearInterval(muteEnforcer);
@@ -206,8 +238,6 @@ export function buildInjectedBridge(initialDevice) {
     updateMuteEnforcer();
   }
 
-  // User activation is exactly when Cocos tends to resume WebAudio. Re-apply the
-  // policy after the current event dispatch so Global Mute cannot be undone by it.
   ['pointerdown','mousedown','touchstart','keydown'].forEach(function(type){
     window.addEventListener(type, function(){
       if (!shouldMuteAudio()) return;
@@ -215,45 +245,68 @@ export function buildInjectedBridge(initialDevice) {
     }, true);
   });
 
-  function callBridge(method) {
-    var cgb = window.cgb || window.super_html;
-    if (cgb) {
-      if (method === 'gameEnd') {
-        if (typeof cgb.gameEnd === 'function') { cgb.gameEnd(); return true; }
-        if (typeof cgb.game_end === 'function') { cgb.game_end(); return true; }
-      }
-      if (method === 'download' && typeof cgb.download === 'function') {
-        var oldOpen = window.open;
-        var oldMraidOpen = window.mraid && window.mraid.open;
-        window.open = function(url){ post('CTA_ATTEMPT', { url: String(url || '') }); return null; };
-        if (window.mraid && typeof window.mraid.open === 'function') {
-          window.mraid.open = function(url){ post('CTA_ATTEMPT', { url: String(url || '') }); };
-        }
-        try { cgb.download(); }
-        finally {
-          window.open = oldOpen;
-          if (window.mraid && oldMraidOpen) window.mraid.open = oldMraidOpen;
-        }
-        return true;
-      }
+  function findUrlArgument(args) {
+    for (var i = 0; i < args.length; i++) {
+      var clean = navigationUrl(args[i]);
+      if (clean) return clean;
     }
-    if (method === 'gameEnd' && typeof window.gameEnd === 'function') { window.gameEnd(); return true; }
-    return false;
+    return '';
   }
+
+  function patchDownloadObject(target, label) {
+    if (!target || typeof target.download !== 'function') return false;
+    var current = target.download;
+    if (current.__cgbPreviewDownloadWrapped) return true;
+    var wrapped = function(){
+      var url = findUrlArgument(arguments);
+      if (url) reportCta('CTA_CALL', url, label + '.download argument');
+      return current.apply(this, arguments);
+    };
+    try { Object.defineProperty(wrapped, '__cgbPreviewDownloadWrapped', { value: true }); } catch (_) { wrapped.__cgbPreviewDownloadWrapped = true; }
+    try { target.download = wrapped; return target.download === wrapped; } catch (_) { return false; }
+  }
+
+  function patchCgbDownload() {
+    var patched = false;
+    patched = patchDownloadObject(window.cgb, 'cgb') || patched;
+    if (window.super_html !== window.cgb) patched = patchDownloadObject(window.super_html, 'super_html') || patched;
+    return patched;
+  }
+
+  function callDownload() {
+    patchCgbDownload();
+    var cgb = window.cgb || window.super_html;
+    if (!cgb || typeof cgb.download !== 'function') return false;
+    try {
+      cgb.download();
+      return true;
+    } catch (error) {
+      post('FRAME_ERROR', { message: 'CTA download failed: ' + String(error && error.message ? error.message : error) });
+      return false;
+    }
+  }
+
+  cgbPatchTimer = setInterval(function(){
+    if (patchCgbDownload()) {
+      clearInterval(cgbPatchTimer);
+      cgbPatchTimer = 0;
+    }
+  }, 200);
 
   window.addEventListener('message', function(event){
     var msg = event.data;
     if (!msg || msg.source !== 'cgb-preview-host') return;
     if (msg.type === 'SET_MUTE') setMutePolicy(msg.muted, msg.audible);
     else if (msg.type === 'SET_VIEWPORT') applyViewport(msg.device);
-    else if (msg.type === 'COMMAND') {
-      var ok = callBridge(msg.command);
-      post('COMMAND_RESULT', { command: msg.command, ok: ok });
+    else if (msg.type === 'COMMAND' && msg.command === 'download') {
+      var ok = callDownload();
+      post('COMMAND_RESULT', { command: 'download', ok: ok });
     }
   });
 
   window.addEventListener('load', function(){
     setTimeout(function(){
+      patchCgbDownload();
       applyMute();
       updateMuteEnforcer();
       post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device });
@@ -262,7 +315,8 @@ export function buildInjectedBridge(initialDevice) {
   window.${BRIDGE_ID} = {
     applyMute: applyMute,
     setMutePolicy: setMutePolicy,
-    callBridge: callBridge,
+    callDownload: callDownload,
+    patchCgbDownload: patchCgbDownload,
     applyViewport: applyViewport
   };
 })();
