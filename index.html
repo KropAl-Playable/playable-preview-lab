@@ -52,8 +52,32 @@
 
       <button id="clearFocusButton" class="button hidden" title="Return the focused viewport to the regular Compare layout">Back to Compare</button>
       <button id="muteButton" class="button icon-button" disabled title="Mute or unmute all Preview Lab runtimes">🔊 <span>Sound</span></button>
-      <button id="endcardButton" class="button" disabled title="Calls the playable bridge gameEnd/game_end method in every active preview">Show Endcard</button>
-      <button id="ctaButton" class="button danger" disabled title="Calls the playable bridge download method without leaving the validator">CTA download</button>
+    </section>
+
+    <section class="cta-validator panel" aria-label="CTA URL validator">
+      <div class="cta-validator-copy">
+        <span class="control-label">CTA URL validator</span>
+        <span class="cta-validator-hint">Enter the expected store links. Preview Lab captures real <code>cgb.download(url)</code> / store-open attempts from the playable.</span>
+      </div>
+
+      <div class="cta-validator-fields">
+        <label id="appStoreField" class="cta-url-field" data-state="neutral">
+          <span class="cta-url-heading"><span>App Store</span><span id="appStoreMark" class="cta-url-mark">—</span></span>
+          <input id="appStoreUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://apps.apple.com/..." />
+          <span id="appStoreActual" class="cta-actual">Captured: —</span>
+        </label>
+
+        <label id="googlePlayField" class="cta-url-field" data-state="neutral">
+          <span class="cta-url-heading"><span>Google Play</span><span id="googlePlayMark" class="cta-url-mark">—</span></span>
+          <input id="googlePlayUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://play.google.com/store/apps/details?id=..." />
+          <span id="googlePlayActual" class="cta-actual">Captured: —</span>
+        </label>
+      </div>
+
+      <div class="cta-validator-actions">
+        <button id="ctaButton" class="button danger" disabled title="Calls cgb.download() in every active preview and captures the URL it tries to open">CTA download</button>
+        <span id="ctaStatus" class="cta-test-status">No CTA captured yet.</span>
+      </div>
     </section>
 
     <section id="sourceInfo" class="source-info hidden">
