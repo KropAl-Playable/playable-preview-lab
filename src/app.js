@@ -5,6 +5,7 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   fileInput: $('#fileInput'), reload: $('#reloadButton'), dropZone: $('#dropZone'), stage: $('#previewStage'),
   device: $('#deviceSelect'), previewDpr: $('#previewDprButton'), deviceDpr: $('#deviceDprButton'),
+  hostPlatform: $('#hostPlatformButton'), iosPlatform: $('#iosPlatformButton'), androidPlatform: $('#androidPlatformButton'),
   clearFocus: $('#clearFocusButton'), mute: $('#muteButton'), cta: $('#ctaButton'),
   appStoreField: $('#appStoreField'), appStoreUrl: $('#appStoreUrl'), appStoreMark: $('#appStoreMark'), appStoreActual: $('#appStoreActual'),
   googlePlayField: $('#googlePlayField'), googlePlayUrl: $('#googlePlayUrl'), googlePlayMark: $('#googlePlayMark'), googlePlayActual: $('#googlePlayActual'),
@@ -19,7 +20,7 @@ function makeCaptureBucket() {
 
 const state = {
   sourceHtml: '', fileName: '', fileSize: 0,
-  selectedProfileId: 'iphone-13', dprMode: 'preview',
+  selectedProfileId: 'iphone-13', dprMode: 'preview', platformMode: 'host',
   muted: false, audioMasterId: null, focusedId: null,
   sessions: new Map(),
   ctaCaptures: {
@@ -41,6 +42,10 @@ elements.device.value = state.selectedProfileId;
 
 function currentProfile() {
   return DEVICE_PROFILES.find((profile) => profile.id === state.selectedProfileId) || DEVICE_PROFILES[0];
+}
+
+function slotId(view, index = 0) {
+  return view.slot || view.id || `runtime-${index}`;
 }
 
 function formatBytes(bytes) {
@@ -66,10 +71,14 @@ function setActive(buttons, active) {
   buttons.forEach((button) => button.classList.toggle('active', button === active));
 }
 
+function platformLabel() {
+  return state.platformMode === 'ios' ? 'iOS emulation' : state.platformMode === 'android' ? 'Android emulation' : 'Host platform';
+}
+
 function updateProfileInfo() {
   const profile = currentProfile();
   if (!profile) return;
-  const parts = [`${profile.views.length} live view${profile.views.length === 1 ? '' : 's'}`];
+  const parts = [`${profile.views.length} live view${profile.views.length === 1 ? '' : 's'}`, platformLabel()];
   if (profile.note) parts.push(profile.note);
   elements.profileInfo.textContent = parts.join(' · ');
 }
@@ -80,8 +89,10 @@ function updateCardMeta(session) {
   const actualDpr = state.dprMode === 'device' ? view.dpr : 1;
   session.metrics.textContent = `${view.width}×${view.height} · DPR ${actualDpr}${state.dprMode === 'preview' && view.dpr !== 1 ? ` (device ${view.dpr})` : ''}`;
   session.card.dataset.viewId = view.id;
+  session.card.dataset.slotId = session.id;
   session.card.dataset.orientation = view.orientation || '';
   session.frame.dataset.viewId = view.id;
+  session.frame.dataset.slotId = session.id;
 }
 
 function applyViewport(session) {
@@ -94,7 +105,7 @@ function applyViewport(session) {
   postFrame(session.frame, { type: 'SET_VIEWPORT', device: view });
 }
 
-function createSession(view) {
+function createSession(view, runtimeSlot) {
   const fragment = elements.template.content.cloneNode(true);
   const card = fragment.querySelector('.device-card');
   const shell = fragment.querySelector('.device-shell');
@@ -107,7 +118,7 @@ function createSession(view) {
   const masterButton = fragment.querySelector('.audio-master-button');
 
   const session = {
-    id: view.id, view, card, shell, frame, status, banner, name, metrics,
+    id: runtimeSlot, view, card, shell, frame, status, banner, name, metrics,
     focusButton, masterButton,
     ready: false, hasCgbBridge: false, error: null,
   };
@@ -129,7 +140,10 @@ function createSession(view) {
     updateAudio();
   });
   const initial = effectiveView(view);
-  session.frame.srcdoc = injectPreviewBridge(state.sourceHtml, initial, { baseHref: previewBaseUrl() });
+  session.frame.srcdoc = injectPreviewBridge(state.sourceHtml, initial, {
+    baseHref: previewBaseUrl(),
+    platform: state.platformMode,
+  });
   return session;
 }
 
@@ -153,27 +167,30 @@ function syncSessionsToProfile({ restart = false } = {}) {
   if (!profile) return;
   if (restart) destroyAllSessions();
 
-  const desiredIds = new Set(profile.views.map((view) => view.id));
-  for (const [id, session] of [...state.sessions]) {
-    if (!desiredIds.has(id)) {
+  const desired = profile.views.map((view, index) => ({ view, slot: slotId(view, index) }));
+  const desiredSlots = new Set(desired.map((entry) => entry.slot));
+
+  for (const [runtimeSlot, session] of [...state.sessions]) {
+    if (!desiredSlots.has(runtimeSlot)) {
       destroySession(session);
-      state.sessions.delete(id);
+      state.sessions.delete(runtimeSlot);
     }
   }
 
-  for (const view of profile.views) {
-    let session = state.sessions.get(view.id);
+  for (const entry of desired) {
+    let session = state.sessions.get(entry.slot);
     if (!session) {
-      session = createSession(view);
-      state.sessions.set(view.id, session);
+      session = createSession(entry.view, entry.slot);
+      state.sessions.set(entry.slot, session);
     } else {
-      session.view = view;
+      // Device changes reuse the same iframe. Only its logical viewport changes.
+      session.view = entry.view;
       applyViewport(session);
     }
     elements.stage.append(session.card);
   }
 
-  const ids = profile.views.map((view) => view.id);
+  const ids = desired.map((entry) => entry.slot);
   if (!ids.includes(state.audioMasterId)) state.audioMasterId = ids[0] || null;
   if (!ids.includes(state.focusedId)) state.focusedId = null;
 
@@ -300,6 +317,13 @@ function effectiveCapturedUrls(store) {
   return [...preferred];
 }
 
+function captureCount() {
+  return ['appStore', 'googlePlay', 'other'].reduce((sum, store) => {
+    const bucket = state.ctaCaptures[store];
+    return sum + bucket.call.size + bucket.attempt.size;
+  }, 0);
+}
+
 function setFieldValidation(store, field, input, mark, actualLabel) {
   const expectedRaw = input.value.trim();
   const captured = effectiveCapturedUrls(store);
@@ -392,20 +416,36 @@ function recordCta(url, sourceType, session) {
 }
 
 function testCtaDownload() {
-  resetCtaCaptures({ testing: true });
+  clearTimeout(state.ctaTestTimer);
+  const before = captureCount();
+  elements.ctaStatus.classList.add('testing');
+  elements.ctaStatus.textContent = `Calling cgb.download() in ${platformLabel()}…`;
   for (const session of state.sessions.values()) {
     postFrame(session.frame, { type: 'COMMAND', command: 'download' });
   }
   state.ctaTestTimer = setTimeout(() => {
-    const total = ['appStore', 'googlePlay', 'other'].reduce((sum, store) => {
-      const bucket = state.ctaCaptures[store];
-      return sum + bucket.call.size + bucket.attempt.size;
-    }, 0);
-    if (!total) {
-      elements.ctaStatus.classList.remove('testing');
-      elements.ctaStatus.textContent = 'cgb.download() was called, but no URL was captured.';
+    elements.ctaStatus.classList.remove('testing');
+    if (captureCount() === before) {
+      elements.ctaStatus.textContent = `No new CTA URL captured in ${platformLabel()}.`;
+    } else {
+      updateCtaValidation();
     }
   }, 700);
+}
+
+function setPlatform(mode, activeButton) {
+  if (state.platformMode === mode) return;
+  state.platformMode = mode;
+  setActive([elements.hostPlatform, elements.iosPlatform, elements.androidPlatform], activeButton);
+  updateProfileInfo();
+  if (!state.sourceHtml) return;
+
+  // Platform sniffing normally happens during bootstrap, so changing emulation is
+  // one of the few operations that intentionally recreates the live runtimes.
+  clearTimeout(state.ctaTestTimer);
+  elements.ctaStatus.classList.remove('testing');
+  elements.ctaStatus.textContent = `Restarted runtimes for ${platformLabel()}. Previous CTA captures are preserved.`;
+  syncSessionsToProfile({ restart: true });
 }
 
 async function loadFile(file) {
@@ -433,6 +473,9 @@ elements.device.addEventListener('change', () => {
   state.selectedProfileId = elements.device.value;
   syncSessionsToProfile();
 });
+elements.hostPlatform.addEventListener('click', () => setPlatform('host', elements.hostPlatform));
+elements.iosPlatform.addEventListener('click', () => setPlatform('ios', elements.iosPlatform));
+elements.androidPlatform.addEventListener('click', () => setPlatform('android', elements.androidPlatform));
 elements.previewDpr.addEventListener('click', () => {
   state.dprMode = 'preview';
   setActive([elements.previewDpr, elements.deviceDpr], elements.previewDpr);
@@ -475,7 +518,7 @@ window.addEventListener('message', (event) => {
   if (!session) return;
 
   if (message.type === 'BRIDGE_INSTALLED') {
-    if (!session.ready && !session.error) session.status.textContent = 'Preview bridge installed · starting Cocos…';
+    if (!session.ready && !session.error) session.status.textContent = `Preview bridge installed · ${platformLabel()} · starting Cocos…`;
   } else if (message.type === 'READY') {
     session.ready = true;
     session.hasCgbBridge = Boolean(message.hasCgbBridge);
