@@ -1,13 +1,20 @@
 const BRIDGE_ID = '__CGB_PREVIEW_BRIDGE__';
 
-export function buildInjectedBridge(initialDevice) {
-  const config = JSON.stringify({ width: initialDevice.width, height: initialDevice.height, dpr: initialDevice.dpr });
+export function buildInjectedBridge(initialDevice, platformMode = 'host') {
+  const config = JSON.stringify({
+    width: initialDevice.width,
+    height: initialDevice.height,
+    dpr: initialDevice.dpr,
+    orientation: initialDevice.orientation || (initialDevice.width >= initialDevice.height ? 'landscape' : 'portrait'),
+  });
+  const platform = JSON.stringify(platformMode || 'host');
   return `
 <script data-cgb-preview-bridge>
 (function installCgbPreviewBridge(){
   if (window.${BRIDGE_ID}) return;
   var parentOrigin = '*';
   var device = ${config};
+  var platformMode = ${platform};
   var contexts = [];
   var globallyMuted = false;
   var frameAudible = true;
@@ -18,29 +25,86 @@ export function buildInjectedBridge(initialDevice) {
   function defineMetric(target, name, getter) {
     try { Object.defineProperty(target, name, { configurable: true, get: getter }); } catch (_) {}
   }
-  defineMetric(window, 'devicePixelRatio', function(){ return device.dpr; });
-  if (window.screen) {
-    defineMetric(window.screen, 'width', function(){ return device.width; });
-    defineMetric(window.screen, 'height', function(){ return device.height; });
-    defineMetric(window.screen, 'availWidth', function(){ return device.width; });
-    defineMetric(window.screen, 'availHeight', function(){ return device.height; });
+
+  function defineValue(target, name, value) {
+    defineMetric(target, name, function(){ return value; });
   }
 
   function post(type, payload) {
     try { parent.postMessage(Object.assign({ source: 'cgb-preview-frame', type: type }, payload || {}), parentOrigin); } catch (_) {}
   }
 
+  function installPlatformEmulation() {
+    if (platformMode === 'ios') {
+      var iosUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+      defineValue(navigator, 'userAgent', iosUa);
+      defineValue(navigator, 'appVersion', iosUa.replace(/^Mozilla\//, ''));
+      defineValue(navigator, 'platform', 'iPhone');
+      defineValue(navigator, 'vendor', 'Apple Computer, Inc.');
+      defineValue(navigator, 'maxTouchPoints', 5);
+      defineValue(navigator, 'userAgentData', undefined);
+      try { defineValue(navigator, 'standalone', false); } catch (_) {}
+    } else if (platformMode === 'android') {
+      var androidUa = 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+      defineValue(navigator, 'userAgent', androidUa);
+      defineValue(navigator, 'appVersion', androidUa.replace(/^Mozilla\//, ''));
+      defineValue(navigator, 'platform', 'Linux armv8l');
+      defineValue(navigator, 'vendor', 'Google Inc.');
+      defineValue(navigator, 'maxTouchPoints', 5);
+      var uaData = {
+        brands: [
+          { brand: 'Chromium', version: '120' },
+          { brand: 'Google Chrome', version: '120' },
+          { brand: 'Not_A Brand', version: '99' }
+        ],
+        mobile: true,
+        platform: 'Android',
+        getHighEntropyValues: function(){
+          return Promise.resolve({
+            architecture: 'arm', bitness: '64', model: 'Pixel 7', mobile: true,
+            platform: 'Android', platformVersion: '14.0.0', uaFullVersion: '120.0.0.0'
+          });
+        },
+        toJSON: function(){ return { brands: this.brands, mobile: true, platform: 'Android' }; }
+      };
+      defineValue(navigator, 'userAgentData', uaData);
+    }
+  }
+
+  installPlatformEmulation();
+
+  defineMetric(window, 'devicePixelRatio', function(){ return device.dpr; });
+  defineMetric(window, 'orientation', function(){ return device.orientation === 'landscape' ? 90 : 0; });
+  if (window.screen) {
+    defineMetric(window.screen, 'width', function(){ return device.width; });
+    defineMetric(window.screen, 'height', function(){ return device.height; });
+    defineMetric(window.screen, 'availWidth', function(){ return device.width; });
+    defineMetric(window.screen, 'availHeight', function(){ return device.height; });
+    if (window.screen.orientation) {
+      defineMetric(window.screen.orientation, 'type', function(){ return device.orientation + '-primary'; });
+      defineMetric(window.screen.orientation, 'angle', function(){ return device.orientation === 'landscape' ? 90 : 0; });
+    }
+  }
+
   function applyViewport(next) {
     if (!next) return;
+    var previousOrientation = device.orientation || (device.width >= device.height ? 'landscape' : 'portrait');
+    var nextWidth = Number(next.width) || device.width;
+    var nextHeight = Number(next.height) || device.height;
+    var nextOrientation = next.orientation || (nextWidth >= nextHeight ? 'landscape' : 'portrait');
+    var orientationChanged = nextOrientation !== previousOrientation;
     device = {
-      width: Number(next.width) || device.width,
-      height: Number(next.height) || device.height,
-      dpr: Number(next.dpr) || 1
+      width: nextWidth,
+      height: nextHeight,
+      dpr: Number(next.dpr) || 1,
+      orientation: nextOrientation
     };
     requestAnimationFrame(function(){
       try { window.dispatchEvent(new Event('resize')); } catch (_) {}
-      try { window.dispatchEvent(new Event('orientationchange')); } catch (_) {}
-      post('VIEWPORT_APPLIED', { device: device });
+      if (orientationChanged) {
+        try { window.dispatchEvent(new Event('orientationchange')); } catch (_) {}
+      }
+      post('VIEWPORT_APPLIED', { device: device, orientationChanged: orientationChanged });
     });
   }
 
@@ -52,12 +116,9 @@ export function buildInjectedBridge(initialDevice) {
   function reportCta(type, url, via) {
     var clean = navigationUrl(url);
     if (!clean) return;
-    post(type, { url: clean, via: via || '' });
+    post(type, { url: clean, via: via || '', platform: platformMode });
   }
 
-  // Preview pages must never leave the validator when a playable opens a store.
-  // Keep window.open permanently intercepted and report the attempted destination.
-  var nativeWindowOpen = window.open;
   try {
     window.open = function(url){
       reportCta('CTA_ATTEMPT', url, 'window.open');
@@ -65,9 +126,6 @@ export function buildInjectedBridge(initialDevice) {
     };
   } catch (_) {}
 
-  // Programmatic and user-triggered anchor navigation is also captured. This does
-  // not catch direct location.href assignments, which browsers do not expose as a
-  // reliably replaceable API, but covers the common CGB/network-adapter paths.
   document.addEventListener('click', function(event){
     var target = event && event.target;
     if (!target) return;
@@ -81,8 +139,6 @@ export function buildInjectedBridge(initialDevice) {
     reportCta('CTA_ATTEMPT', href, 'anchor');
   }, true);
 
-  // AppLovin supplies mraid.js in the real ad container. GitHub Pages does not,
-  // so provide a minimal preview implementation before the playable bootstrap.
   if (!window.mraid) {
     var mraidListeners = {};
     window.mraid = {
@@ -124,7 +180,7 @@ export function buildInjectedBridge(initialDevice) {
       message: reason && reason.message ? String(reason.message) : String(reason || 'Unhandled promise rejection')
     });
   });
-  post('BRIDGE_INSTALLED', { device: device });
+  post('BRIDGE_INSTALLED', { device: device, platform: platformMode });
 
   function shouldMuteAudio() {
     return globallyMuted || !frameAudible;
@@ -144,7 +200,6 @@ export function buildInjectedBridge(initialDevice) {
     function WrappedAudioContext() {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
       rememberContext(instance);
-
       if (nativeResume) {
         try {
           instance.resume = function(){
@@ -159,7 +214,6 @@ export function buildInjectedBridge(initialDevice) {
           };
         } catch (_) {}
       }
-
       if (shouldMuteAudio() && nativeSuspend) {
         setTimeout(function(){
           try { nativeSuspend.call(instance); } catch (_) {}
@@ -209,7 +263,6 @@ export function buildInjectedBridge(initialDevice) {
     try {
       document.querySelectorAll('audio,video').forEach(function(media){ applyMediaMute(media, shouldMute); });
     } catch (_) {}
-
     contexts.slice().forEach(function(ctx){
       try {
         if (shouldMute) {
@@ -300,7 +353,7 @@ export function buildInjectedBridge(initialDevice) {
     else if (msg.type === 'SET_VIEWPORT') applyViewport(msg.device);
     else if (msg.type === 'COMMAND' && msg.command === 'download') {
       var ok = callDownload();
-      post('COMMAND_RESULT', { command: 'download', ok: ok });
+      post('COMMAND_RESULT', { command: 'download', ok: ok, platform: platformMode });
     }
   });
 
@@ -309,7 +362,7 @@ export function buildInjectedBridge(initialDevice) {
       patchCgbDownload();
       applyMute();
       updateMuteEnforcer();
-      post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device });
+      post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device, platform: platformMode });
     }, 0);
   });
   window.${BRIDGE_ID} = {
@@ -317,14 +370,16 @@ export function buildInjectedBridge(initialDevice) {
     setMutePolicy: setMutePolicy,
     callDownload: callDownload,
     patchCgbDownload: patchCgbDownload,
-    applyViewport: applyViewport
+    applyViewport: applyViewport,
+    platform: platformMode
   };
 })();
 </script>`;
 }
 
 export function injectPreviewBridge(html, device, options = {}) {
-  const bridge = buildInjectedBridge(device);
+  const platformMode = typeof options.platform === 'string' ? options.platform : 'host';
+  const bridge = buildInjectedBridge(device, platformMode);
   const baseHref = typeof options.baseHref === 'string' ? options.baseHref : '';
   const hasBase = /<base(?:\s[^>]*)?>/i.test(html);
   const safeBaseHref = baseHref
