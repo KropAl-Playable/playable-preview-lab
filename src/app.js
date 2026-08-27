@@ -101,6 +101,8 @@ function applyViewport(session) {
   session.shell.style.setProperty('--frame-h', `${view.height}px`);
   session.frame.style.width = `${view.width}px`;
   session.frame.style.height = `${view.height}px`;
+  session.shell.dataset.cutout = view.cutout || currentProfile().cutout || 'none';
+  session.shell.dataset.orientation = view.orientation || '';
   updateCardMeta(session);
   postFrame(session.frame, { type: 'SET_VIEWPORT', device: view });
 }
