@@ -193,6 +193,58 @@ select { min-width: 230px; }
   border-radius: max(10px, calc(30px * var(--scale)));
   background: #05070a;
 }
+.device-cutout {
+  position: absolute;
+  z-index: 12;
+  display: none;
+  pointer-events: none;
+  background: #020203;
+  box-shadow: 0 0 0 1px #ffffff0d;
+}
+
+.device-shell[data-cutout="notch"] .device-cutout {
+  display: block;
+}
+
+.device-shell[data-cutout="notch"][data-orientation="portrait"] .device-cutout {
+  top: 0;
+  left: 50%;
+  width: calc(188px * var(--scale));
+  height: calc(30px * var(--scale));
+  border-radius: 0 0 calc(18px * var(--scale)) calc(18px * var(--scale));
+  transform: translateX(-50%);
+}
+
+.device-shell[data-cutout="notch"][data-orientation="landscape"] .device-cutout {
+  top: 50%;
+  left: 0;
+  width: calc(30px * var(--scale));
+  height: calc(188px * var(--scale));
+  border-radius: 0 calc(18px * var(--scale)) calc(18px * var(--scale)) 0;
+  transform: translateY(-50%);
+}
+
+.device-shell[data-cutout="dynamic-island"] .device-cutout {
+  display: block;
+  border-radius: 999px;
+}
+
+.device-shell[data-cutout="dynamic-island"][data-orientation="portrait"] .device-cutout {
+  top: calc(11px * var(--scale));
+  left: 50%;
+  width: calc(126px * var(--scale));
+  height: calc(37px * var(--scale));
+  transform: translateX(-50%);
+}
+
+.device-shell[data-cutout="dynamic-island"][data-orientation="landscape"] .device-cutout {
+  top: 50%;
+  left: calc(11px * var(--scale));
+  width: calc(37px * var(--scale));
+  height: calc(126px * var(--scale));
+  transform: translateY(-50%);
+}
+
 .device-frame {
   display: block;
   width: var(--frame-w);
