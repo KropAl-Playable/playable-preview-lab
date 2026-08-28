@@ -15,6 +15,15 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   var parentOrigin = '*';
   var device = ${config};
   var platformMode = ${platform};
+  var hostNavigator = {
+    userAgent: navigator.userAgent,
+    appVersion: navigator.appVersion,
+    platform: navigator.platform,
+    vendor: navigator.vendor,
+    maxTouchPoints: navigator.maxTouchPoints,
+    userAgentData: navigator.userAgentData,
+    standalone: navigator.standalone
+  };
   var contexts = [];
   var globallyMuted = false;
   var frameAudible = true;
@@ -35,7 +44,15 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   }
 
   function installPlatformEmulation() {
-    if (platformMode === 'ios') {
+    if (platformMode === 'host') {
+      defineValue(navigator, 'userAgent', hostNavigator.userAgent);
+      defineValue(navigator, 'appVersion', hostNavigator.appVersion);
+      defineValue(navigator, 'platform', hostNavigator.platform);
+      defineValue(navigator, 'vendor', hostNavigator.vendor);
+      defineValue(navigator, 'maxTouchPoints', hostNavigator.maxTouchPoints);
+      defineValue(navigator, 'userAgentData', hostNavigator.userAgentData);
+      try { defineValue(navigator, 'standalone', hostNavigator.standalone); } catch (_) {}
+    } else if (platformMode === 'ios') {
       var iosUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
       defineValue(navigator, 'userAgent', iosUa);
       defineValue(navigator, 'appVersion', iosUa.replace(/^Mozilla\//, ''));
@@ -72,6 +89,17 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   }
 
   installPlatformEmulation();
+
+  function setPlatformMode(nextMode) {
+    var next = nextMode === 'ios' || nextMode === 'android' ? nextMode : 'host';
+    if (platformMode === next) return;
+    platformMode = next;
+    installPlatformEmulation();
+    try {
+      window.dispatchEvent(new CustomEvent('cgbpreviewplatformchange', { detail: { platform: platformMode } }));
+    } catch (_) {}
+    post('PLATFORM_APPLIED', { platform: platformMode });
+  }
 
   defineMetric(window, 'devicePixelRatio', function(){ return device.dpr; });
   defineMetric(window, 'orientation', function(){ return device.orientation === 'landscape' ? 90 : 0; });
@@ -191,9 +219,31 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     return context;
   }
 
+  function patchAudioContextPrototype(Native) {
+    if (!Native || !Native.prototype || Native.prototype.__cgbPreviewContextPatched) return;
+    try {
+      var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
+      var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
+      Object.defineProperty(Native.prototype, '__cgbPreviewContextPatched', { value: true, configurable: true });
+      if (nativeResume) {
+        Native.prototype.resume = function(){
+          rememberContext(this);
+          if (shouldMuteAudio()) {
+            try {
+              if (nativeSuspend && this.state !== 'suspended') nativeSuspend.call(this);
+            } catch (_) {}
+            return Promise.resolve();
+          }
+          return nativeResume.apply(this, arguments);
+        };
+      }
+    } catch (_) {}
+  }
+
   function patchAudioContext(name) {
     var Native = window[name];
     if (typeof Native !== 'function' || !Native.prototype) return;
+    patchAudioContextPrototype(Native);
     var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
     var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
 
@@ -277,7 +327,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   function updateMuteEnforcer() {
     var shouldMute = shouldMuteAudio();
     if (shouldMute && !muteEnforcer) {
-      muteEnforcer = setInterval(applyMute, 200);
+      muteEnforcer = setInterval(applyMute, 100);
     } else if (!shouldMute && muteEnforcer) {
       clearInterval(muteEnforcer);
       muteEnforcer = 0;
@@ -351,6 +401,7 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     if (!msg || msg.source !== 'cgb-preview-host') return;
     if (msg.type === 'SET_MUTE') setMutePolicy(msg.muted, msg.audible);
     else if (msg.type === 'SET_VIEWPORT') applyViewport(msg.device);
+    else if (msg.type === 'SET_PLATFORM') setPlatformMode(msg.platform);
     else if (msg.type === 'COMMAND' && msg.command === 'download') {
       var ok = callDownload();
       post('COMMAND_RESULT', { command: 'download', ok: ok, platform: platformMode });
@@ -371,7 +422,8 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     callDownload: callDownload,
     patchCgbDownload: patchCgbDownload,
     applyViewport: applyViewport,
-    platform: platformMode
+    setPlatformMode: setPlatformMode,
+    get platform(){ return platformMode; }
   };
 })();
 </script>`;
