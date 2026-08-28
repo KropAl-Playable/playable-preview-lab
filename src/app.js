@@ -149,6 +149,8 @@ function createSession(view, runtimeSlot) {
   session.frame.srcdoc = injectPreviewBridge(state.sourceHtml, initial, {
     baseHref: previewBaseUrl(),
     platform: state.platformMode,
+    muted: state.muted,
+    audible: !state.muted && runtimeSlot === state.audioMasterId,
   });
   return session;
 }
@@ -175,6 +177,11 @@ function syncSessionsToProfile({ restart = false } = {}) {
 
   const desired = profile.views.map((view, index) => ({ view, slot: slotId(view, index) }));
   const desiredSlots = new Set(desired.map((entry) => entry.slot));
+  const desiredIds = desired.map((entry) => entry.slot);
+
+  // Select the audible slot before creating any new iframe so its injected
+  // bridge starts with the correct audio policy from the very first script.
+  if (!desiredIds.includes(state.audioMasterId)) state.audioMasterId = desiredIds[0] || null;
 
   // Preserve every runtime slot across device changes. Slots not used by the
   // selected profile stay alive in the background instead of being destroyed.
@@ -199,9 +206,7 @@ function syncSessionsToProfile({ restart = false } = {}) {
     }
   }
 
-  const ids = desired.map((entry) => entry.slot);
-  if (!ids.includes(state.audioMasterId)) state.audioMasterId = ids[0] || null;
-  if (!ids.includes(state.focusedId)) state.focusedId = null;
+  if (!desiredIds.includes(state.focusedId)) state.focusedId = null;
 
   elements.stage.dataset.viewCount = String(profile.views.length);
   elements.stage.dataset.deviceKind = profile.kind;
