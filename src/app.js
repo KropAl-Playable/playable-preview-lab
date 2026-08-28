@@ -67,6 +67,10 @@ function postFrame(frame, message) {
   frame.contentWindow?.postMessage({ source: 'cgb-preview-host', ...message }, '*');
 }
 
+function activeSessions() {
+  return [...state.sessions.values()].filter((session) => session.active !== false);
+}
+
 function setActive(buttons, active) {
   buttons.forEach((button) => button.classList.toggle('active', button === active));
 }
@@ -122,7 +126,7 @@ function createSession(view, runtimeSlot) {
   const session = {
     id: runtimeSlot, view, card, shell, frame, status, banner, name, metrics,
     focusButton, masterButton,
-    ready: false, hasCgbBridge: false, error: null,
+    ready: false, hasCgbBridge: false, error: null, active: true,
   };
 
   focusButton.addEventListener('click', () => {
@@ -172,11 +176,11 @@ function syncSessionsToProfile({ restart = false } = {}) {
   const desired = profile.views.map((view, index) => ({ view, slot: slotId(view, index) }));
   const desiredSlots = new Set(desired.map((entry) => entry.slot));
 
-  for (const [runtimeSlot, session] of [...state.sessions]) {
-    if (!desiredSlots.has(runtimeSlot)) {
-      destroySession(session);
-      state.sessions.delete(runtimeSlot);
-    }
+  // Preserve every runtime slot across device changes. Slots not used by the
+  // selected profile stay alive in the background instead of being destroyed.
+  for (const [runtimeSlot, session] of state.sessions) {
+    session.active = desiredSlots.has(runtimeSlot);
+    session.card.classList.toggle('hidden', !session.active);
   }
 
   for (const entry of desired) {
@@ -185,7 +189,8 @@ function syncSessionsToProfile({ restart = false } = {}) {
       session = createSession(entry.view, entry.slot);
       state.sessions.set(entry.slot, session);
     } else {
-      // Device changes reuse the same iframe. Only its logical viewport changes.
+      session.active = true;
+      session.card.classList.remove('hidden');
       session.view = entry.view;
       applyViewport(session);
     }
@@ -224,7 +229,7 @@ function focusedScale(session) {
 
 function updateScales() {
   const common = compareScale();
-  for (const session of state.sessions.values()) {
+  for (const session of activeSessions()) {
     const scale = state.focusedId === session.id ? focusedScale(session) : common;
     session.shell.style.setProperty('--scale', String(scale));
     session.card.style.setProperty('--visual-width', `${session.view.width * scale + 20}px`);
@@ -234,7 +239,7 @@ function updateScales() {
 function updateFocusLayout() {
   elements.stage.classList.toggle('focus-mode', Boolean(state.focusedId));
   elements.clearFocus.classList.toggle('hidden', !state.focusedId);
-  for (const session of state.sessions.values()) {
+  for (const session of activeSessions()) {
     const focused = state.focusedId === session.id;
     session.card.classList.toggle('focused', focused);
     session.focusButton.textContent = focused ? 'Focused' : 'Focus';
@@ -244,7 +249,7 @@ function updateFocusLayout() {
 
 function updateBadges() {
   for (const session of state.sessions.values()) {
-    session.masterButton.classList.toggle('active', session.id === state.audioMasterId);
+    session.masterButton.classList.toggle('active', session.active !== false && session.id === state.audioMasterId);
   }
 }
 
@@ -253,7 +258,7 @@ function updateAudio() {
     postFrame(session.frame, {
       type: 'SET_MUTE',
       muted: state.muted,
-      audible: session.id === state.audioMasterId,
+      audible: session.active !== false && session.id === state.audioMasterId,
     });
   }
   elements.mute.innerHTML = `${state.muted ? '🔇' : '🔊'} <span>${state.muted ? 'Muted' : 'Sound'}</span>`;
@@ -261,7 +266,7 @@ function updateAudio() {
 }
 
 function updateGlobalBridgeStatus() {
-  const sessions = [...state.sessions.values()];
+  const sessions = activeSessions();
   if (!sessions.length) return;
   const ready = sessions.filter((session) => session.ready).length;
   const bridged = sessions.filter((session) => session.hasCgbBridge).length;
@@ -422,7 +427,7 @@ function testCtaDownload() {
   const before = captureCount();
   elements.ctaStatus.classList.add('testing');
   elements.ctaStatus.textContent = `Calling cgb.download() in ${platformLabel()}…`;
-  for (const session of state.sessions.values()) {
+  for (const session of activeSessions()) {
     postFrame(session.frame, { type: 'COMMAND', command: 'download' });
   }
   state.ctaTestTimer = setTimeout(() => {
@@ -442,12 +447,13 @@ function setPlatform(mode, activeButton) {
   updateProfileInfo();
   if (!state.sourceHtml) return;
 
-  // Platform sniffing normally happens during bootstrap, so changing emulation is
-  // one of the few operations that intentionally recreates the live runtimes.
   clearTimeout(state.ctaTestTimer);
   elements.ctaStatus.classList.remove('testing');
-  elements.ctaStatus.textContent = `Restarted runtimes for ${platformLabel()}. Previous CTA captures are preserved.`;
-  syncSessionsToProfile({ restart: true });
+  elements.ctaStatus.textContent = `Switched to ${platformLabel()} without restarting runtimes. Previous CTA captures are preserved.`;
+  for (const session of state.sessions.values()) {
+    postFrame(session.frame, { type: 'SET_PLATFORM', platform: state.platformMode });
+  }
+  updateAudio();
 }
 
 async function loadFile(file) {
@@ -481,13 +487,13 @@ elements.androidPlatform.addEventListener('click', () => setPlatform('android', 
 elements.previewDpr.addEventListener('click', () => {
   state.dprMode = 'preview';
   setActive([elements.previewDpr, elements.deviceDpr], elements.previewDpr);
-  for (const session of state.sessions.values()) applyViewport(session);
+  for (const session of activeSessions()) applyViewport(session);
   updateScales();
 });
 elements.deviceDpr.addEventListener('click', () => {
   state.dprMode = 'device';
   setActive([elements.previewDpr, elements.deviceDpr], elements.deviceDpr);
-  for (const session of state.sessions.values()) applyViewport(session);
+  for (const session of activeSessions()) applyViewport(session);
   updateScales();
 });
 elements.clearFocus.addEventListener('click', () => { state.focusedId = null; updateFocusLayout(); });
