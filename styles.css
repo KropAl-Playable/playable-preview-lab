@@ -275,6 +275,7 @@ select { min-width: 230px; }
 }
 .cta-banner.visible { transform: translateY(0); }
 .frame-status {
+  display: none;
   position: absolute;
   inset: auto 7px 7px;
   z-index: 11;
@@ -289,7 +290,7 @@ select { min-width: 230px; }
   white-space: nowrap;
   pointer-events: none;
 }
-.frame-status.error { background: #4c1720e8; color: #ffdbe0; white-space: normal; }
+.frame-status.error { display: block; background: #4c1720e8; color: #ffdbe0; white-space: normal; }
 .frame-status.ready { display: none; }
 
 @media (max-width: 1100px) {
