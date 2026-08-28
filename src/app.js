@@ -188,13 +188,15 @@ function syncSessionsToProfile({ restart = false } = {}) {
     if (!session) {
       session = createSession(entry.view, entry.slot);
       state.sessions.set(entry.slot, session);
+      // Append a runtime card only once. Re-appending an existing element that
+      // contains an iframe can recreate its browsing context in Chromium.
+      elements.stage.append(session.card);
     } else {
       session.active = true;
       session.card.classList.remove('hidden');
       session.view = entry.view;
       applyViewport(session);
     }
-    elements.stage.append(session.card);
   }
 
   const ids = desired.map((entry) => entry.slot);
