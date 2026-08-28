@@ -1,6 +1,6 @@
 const BRIDGE_ID = '__CGB_PREVIEW_BRIDGE__';
 
-export function buildInjectedBridge(initialDevice, platformMode = 'host') {
+export function buildInjectedBridge(initialDevice, platformMode = 'host', audioPolicy = {}) {
   const config = JSON.stringify({
     width: initialDevice.width,
     height: initialDevice.height,
@@ -8,6 +8,8 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     orientation: initialDevice.orientation || (initialDevice.width >= initialDevice.height ? 'landscape' : 'portrait'),
   });
   const platform = JSON.stringify(platformMode || 'host');
+  const initialMuted = Boolean(audioPolicy.muted);
+  const initialAudible = audioPolicy.audible !== false;
   return `
 <script data-cgb-preview-bridge>
 (function installCgbPreviewBridge(){
@@ -25,10 +27,10 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     standalone: navigator.standalone
   };
   var contexts = [];
-  var globallyMuted = false;
-  var frameAudible = true;
-  var muteEnforcer = 0;
+  var globallyMuted = ${initialMuted};
+  var frameAudible = ${initialAudible};
   var mediaMuteState = typeof WeakMap === 'function' ? new WeakMap() : null;
+  var contextSinkState = typeof WeakMap === 'function' ? new WeakMap() : null;
   var cgbPatchTimer = 0;
 
   function defineMetric(target, name, getter) {
@@ -219,58 +221,92 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     return context;
   }
 
-  function patchAudioContextPrototype(Native) {
-    if (!Native || !Native.prototype || Native.prototype.__cgbPreviewContextPatched) return;
+  function nativeMethod(target, name) {
+    var fn = target && target[name];
+    return typeof fn === 'function' ? fn : null;
+  }
+
+  function suspendContext(context) {
     try {
-      var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
-      var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
-      Object.defineProperty(Native.prototype, '__cgbPreviewContextPatched', { value: true, configurable: true });
-      if (nativeResume) {
-        Native.prototype.resume = function(){
-          rememberContext(this);
-          if (shouldMuteAudio()) {
-            try {
-              if (nativeSuspend && this.state !== 'suspended') nativeSuspend.call(this);
-            } catch (_) {}
-            return Promise.resolve();
-          }
-          return nativeResume.apply(this, arguments);
-        };
+      var suspend = nativeMethod(context, 'suspend');
+      if (suspend && context.state !== 'suspended') {
+        Promise.resolve(suspend.call(context)).catch(function(){});
       }
     } catch (_) {}
+  }
+
+  function resumeContext(context) {
+    try {
+      var resume = nativeMethod(context, 'resume');
+      if (resume && context.state === 'suspended') {
+        Promise.resolve(resume.call(context)).catch(function(){});
+      }
+    } catch (_) {}
+  }
+
+  function routeContext(context, muted) {
+    if (!context) return;
+    rememberContext(context);
+
+    // Prefer Chromium's silent output sink when available. This keeps the
+    // WebAudio clock running while preventing physical audio output.
+    if (typeof context.setSinkId === 'function') {
+      if (muted) {
+        try {
+          if (contextSinkState && !contextSinkState.has(context)) {
+            contextSinkState.set(context, typeof context.sinkId === 'string' ? context.sinkId : '');
+          }
+          Promise.resolve(context.setSinkId({ type: 'none' })).catch(function(){
+            suspendContext(context);
+          });
+          return;
+        } catch (_) {}
+      } else {
+        try {
+          var previousSink = contextSinkState && contextSinkState.has(context)
+            ? contextSinkState.get(context)
+            : '';
+          Promise.resolve(context.setSinkId(previousSink || '')).catch(function(){});
+          if (contextSinkState) contextSinkState.delete(context);
+          resumeContext(context);
+          return;
+        } catch (_) {}
+      }
+    }
+
+    if (muted) suspendContext(context);
+    else resumeContext(context);
   }
 
   function patchAudioContext(name) {
     var Native = window[name];
     if (typeof Native !== 'function' || !Native.prototype) return;
-    patchAudioContextPrototype(Native);
+
     var nativeResume = typeof Native.prototype.resume === 'function' ? Native.prototype.resume : null;
-    var nativeSuspend = typeof Native.prototype.suspend === 'function' ? Native.prototype.suspend : null;
+
+    if (!Native.prototype.__cgbPreviewResumePatched && nativeResume) {
+      try {
+        Object.defineProperty(Native.prototype, '__cgbPreviewResumePatched', { value: true, configurable: true });
+        Native.prototype.resume = function(){
+          rememberContext(this);
+          if (shouldMuteAudio()) {
+            routeContext(this, true);
+            return Promise.resolve();
+          }
+          return nativeResume.apply(this, arguments);
+        };
+      } catch (_) {}
+    }
 
     function WrappedAudioContext() {
       var instance = Reflect.construct(Native, arguments, new.target || WrappedAudioContext);
       rememberContext(instance);
-      if (nativeResume) {
-        try {
-          instance.resume = function(){
-            rememberContext(instance);
-            if (shouldMuteAudio()) {
-              try {
-                if (nativeSuspend && instance.state !== 'suspended') nativeSuspend.call(instance);
-              } catch (_) {}
-              return Promise.resolve();
-            }
-            return nativeResume.apply(instance, arguments);
-          };
-        } catch (_) {}
-      }
-      if (shouldMuteAudio() && nativeSuspend) {
-        setTimeout(function(){
-          try { nativeSuspend.call(instance); } catch (_) {}
-        }, 0);
+      if (shouldMuteAudio()) {
+        setTimeout(function(){ routeContext(instance, true); }, 0);
       }
       return instance;
     }
+
     WrappedAudioContext.prototype = Native.prototype;
     try { Object.setPrototypeOf(WrappedAudioContext, Native); } catch (_) {}
     try { window[name] = WrappedAudioContext; } catch (_) {}
@@ -279,12 +315,33 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   patchAudioContext('AudioContext');
   patchAudioContext('webkitAudioContext');
 
-  if (window.HTMLMediaElement && HTMLMediaElement.prototype) {
-    var nativePlay = HTMLMediaElement.prototype.play;
-    if (typeof nativePlay === 'function' && !HTMLMediaElement.prototype.__cgbPreviewPlayPatched) {
+  function patchMediaElementMutePolicy() {
+    if (!window.HTMLMediaElement || !HTMLMediaElement.prototype) return;
+    var proto = HTMLMediaElement.prototype;
+    var mutedDescriptor = null;
+    try { mutedDescriptor = Object.getOwnPropertyDescriptor(proto, 'muted'); } catch (_) {}
+
+    if (mutedDescriptor && mutedDescriptor.configurable && mutedDescriptor.get && mutedDescriptor.set && !proto.__cgbPreviewMutedPatched) {
       try {
-        Object.defineProperty(HTMLMediaElement.prototype, '__cgbPreviewPlayPatched', { value: true, configurable: true });
-        HTMLMediaElement.prototype.play = function(){
+        Object.defineProperty(proto, '__cgbPreviewMutedPatched', { value: true, configurable: true });
+        Object.defineProperty(proto, 'muted', {
+          configurable: true,
+          enumerable: mutedDescriptor.enumerable,
+          get: function(){ return mutedDescriptor.get.call(this); },
+          set: function(value){
+            // While the frame is muted, playable code cannot unmute a media
+            // element by assigning element.muted = false.
+            return mutedDescriptor.set.call(this, shouldMuteAudio() ? true : value);
+          }
+        });
+      } catch (_) {}
+    }
+
+    var nativePlay = proto.play;
+    if (typeof nativePlay === 'function' && !proto.__cgbPreviewPlayPatched) {
+      try {
+        Object.defineProperty(proto, '__cgbPreviewPlayPatched', { value: true, configurable: true });
+        proto.play = function(){
           if (shouldMuteAudio()) {
             try { this.muted = true; } catch (_) {}
           }
@@ -294,59 +351,47 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
     }
   }
 
+  patchMediaElementMutePolicy();
+
   function applyMediaMute(media, muted) {
     try {
       if (muted) {
         if (mediaMuteState && !mediaMuteState.has(media)) mediaMuteState.set(media, !!media.muted);
         media.muted = true;
       } else if (mediaMuteState && mediaMuteState.has(media)) {
-        media.muted = !!mediaMuteState.get(media);
-        mediaMuteState.delete(media);
-      } else {
-        media.muted = false;
+        var previous = !!mediaMuteState.get(media);
+        if (mediaMuteState) mediaMuteState.delete(media);
+        media.muted = previous;
       }
     } catch (_) {}
   }
 
-  function applyMute() {
-    var shouldMute = shouldMuteAudio();
-    try {
-      document.querySelectorAll('audio,video').forEach(function(media){ applyMediaMute(media, shouldMute); });
-    } catch (_) {}
-    contexts.slice().forEach(function(ctx){
-      try {
-        if (shouldMute) {
-          if (ctx.state !== 'suspended' && typeof ctx.suspend === 'function') Promise.resolve(ctx.suspend()).catch(function(){});
-        } else if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
-          Promise.resolve(ctx.resume()).catch(function(){});
-        }
-      } catch (_) {}
-    });
-  }
+  function applyMutePolicy() {
+    var muted = shouldMuteAudio();
 
-  function updateMuteEnforcer() {
-    var shouldMute = shouldMuteAudio();
-    if (shouldMute && !muteEnforcer) {
-      muteEnforcer = setInterval(applyMute, 100);
-    } else if (!shouldMute && muteEnforcer) {
-      clearInterval(muteEnforcer);
-      muteEnforcer = 0;
-    }
+    // Existing media elements are updated once when policy changes. Future
+    // elements are covered by the patched HTMLMediaElement prototype.
+    try {
+      document.querySelectorAll('audio,video').forEach(function(media){
+        applyMediaMute(media, muted);
+      });
+    } catch (_) {}
+
+    contexts.slice().forEach(function(context){
+      routeContext(context, muted);
+    });
   }
 
   function setMutePolicy(muted, audible) {
     globallyMuted = !!muted;
     frameAudible = !!audible;
-    applyMute();
-    updateMuteEnforcer();
+    applyMutePolicy();
+    post('AUDIO_POLICY_APPLIED', {
+      muted: globallyMuted,
+      audible: frameAudible,
+      effectiveMuted: shouldMuteAudio()
+    });
   }
-
-  ['pointerdown','mousedown','touchstart','keydown'].forEach(function(type){
-    window.addEventListener(type, function(){
-      if (!shouldMuteAudio()) return;
-      setTimeout(applyMute, 0);
-    }, true);
-  });
 
   function findUrlArgument(args) {
     for (var i = 0; i < args.length; i++) {
@@ -411,13 +456,12 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
   window.addEventListener('load', function(){
     setTimeout(function(){
       patchCgbDownload();
-      applyMute();
-      updateMuteEnforcer();
+      applyMutePolicy();
       post('READY', { hasCgbBridge: !!(window.cgb || window.super_html), device: device, platform: platformMode });
     }, 0);
   });
   window.${BRIDGE_ID} = {
-    applyMute: applyMute,
+    applyMutePolicy: applyMutePolicy,
     setMutePolicy: setMutePolicy,
     callDownload: callDownload,
     patchCgbDownload: patchCgbDownload,
@@ -431,7 +475,10 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host') {
 
 export function injectPreviewBridge(html, device, options = {}) {
   const platformMode = typeof options.platform === 'string' ? options.platform : 'host';
-  const bridge = buildInjectedBridge(device, platformMode);
+  const bridge = buildInjectedBridge(device, platformMode, {
+    muted: Boolean(options.muted),
+    audible: options.audible !== false,
+  });
   const baseHref = typeof options.baseHref === 'string' ? options.baseHref : '';
   const hasBase = /<base(?:\s[^>]*)?>/i.test(html);
   const safeBaseHref = baseHref
