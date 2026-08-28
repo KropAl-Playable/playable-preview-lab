@@ -250,6 +250,12 @@ export function buildInjectedBridge(initialDevice, platformMode = 'host', audioP
 
     // Prefer Chromium's silent output sink when available. This keeps the
     // WebAudio clock running while preventing physical audio output.
+    if (muted) {
+      // Suspend synchronously first so no audio can leak while an async sink
+      // change is still being negotiated by the browser.
+      suspendContext(context);
+    }
+
     if (typeof context.setSinkId === 'function') {
       if (muted) {
         try {
