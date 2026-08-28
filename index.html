@@ -13,7 +13,7 @@
       <div class="brand-mark">P</div>
       <div>
         <h1>Playable Preview Lab</h1>
-        <p>Live compare validator for single-HTML playable ads</p>
+        <p>Live compare & network preflight for single-HTML playable ads</p>
       </div>
     </div>
 
@@ -35,6 +35,14 @@
     </section>
 
     <section class="controls panel" aria-label="Preview controls">
+      <div class="control-group">
+        <span class="control-label">Mode</span>
+        <div class="segmented" role="group" aria-label="Preview mode">
+          <button id="compareModeButton" class="active">Compare</button>
+          <button id="networkModeButton">Network Validation</button>
+        </div>
+      </div>
+
       <label class="control-group">
         <span class="control-label">Device profile</span>
         <select id="deviceSelect"></select>
@@ -52,21 +60,35 @@
       <div class="control-group">
         <span class="control-label">Render DPR</span>
         <div class="segmented" role="group" aria-label="Render DPR">
-          <button id="previewDprButton" class="active" title="Use DPR 1 for lower GPU load while preserving CSS viewport dimensions">Preview 1×</button>
-          <button id="deviceDprButton" title="Use the configured device DPR">Device DPR</button>
+          <button id="previewDprButton" class="active">Preview 1×</button>
+          <button id="deviceDprButton">Device DPR</button>
         </div>
       </div>
 
       <div class="spacer"></div>
+      <button id="clearFocusButton" class="button hidden">Back to Compare</button>
+      <button id="muteButton" class="button icon-button" disabled>🔊 <span>Sound</span></button>
+    </section>
 
-      <button id="clearFocusButton" class="button hidden" title="Return the focused viewport to the regular Compare layout">Back to Compare</button>
-      <button id="muteButton" class="button icon-button" disabled title="Mute or unmute all Preview Lab runtimes">🔊 <span>Sound</span></button>
+    <section id="networkValidationPanel" class="network-validation panel hidden" aria-label="Network validation">
+      <div class="network-validation-head">
+        <div>
+          <span class="control-label">Network Validation</span>
+          <div id="networkPresetNote" class="network-note">Local preflight against published requirements and runtime telemetry.</div>
+        </div>
+        <div class="network-actions">
+          <select id="networkSelect" aria-label="Ad network"></select>
+          <button id="runNetworkValidationButton" class="button primary" disabled>Run Validation</button>
+        </div>
+      </div>
+      <div id="networkSummary" class="network-summary">Load a playable and run validation.</div>
+      <div id="networkResults" class="network-results"></div>
     </section>
 
     <section class="cta-validator panel" aria-label="CTA URL validator">
       <div class="cta-validator-copy">
         <span class="control-label">CTA URL validator</span>
-        <span class="cta-validator-hint">Enter expected store links. Use iOS / Android emulation to exercise platform-specific CTA branches. Changing platform intentionally restarts the runtimes.</span>
+        <span class="cta-validator-hint">Enter expected store links. Use iOS / Android emulation to exercise platform-specific CTA branches.</span>
       </div>
 
       <div class="cta-validator-fields">
@@ -84,7 +106,7 @@
       </div>
 
       <div class="cta-validator-actions">
-        <button id="ctaButton" class="button danger" disabled title="Calls cgb.download() in every active preview and captures the URL it tries to open">CTA download</button>
+        <button id="ctaButton" class="button danger" disabled>CTA download</button>
         <span id="ctaStatus" class="cta-test-status">No CTA captured yet.</span>
       </div>
     </section>
@@ -103,13 +125,11 @@
     <article class="device-card">
       <header class="device-card-header">
         <div class="device-card-copy">
-          <div class="device-title-row">
-            <strong class="device-name"></strong>
-          </div>
+          <div class="device-title-row"><strong class="device-name"></strong></div>
           <span class="device-metrics"></span>
         </div>
         <div class="device-card-actions">
-          <button class="focus-button" title="Focus this live viewport without restarting it">Focus</button>
+          <button class="focus-button">Focus</button>
           <button class="audio-master-button" title="Use this preview as the only audible viewport">🔈</button>
         </div>
       </header>
