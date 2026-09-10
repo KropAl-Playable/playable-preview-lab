@@ -1,6 +1,6 @@
-function twoViewProfile(id, name, kind, width, height, dpr) {
+function twoViewProfile(id, name, kind, width, height, dpr, options = {}) {
   return {
-    id, name, kind,
+    id, name, kind, ...options,
     views: [
       { id: `${id}-portrait`, slot: 'primary-portrait', label: 'Portrait', width, height, dpr, orientation: 'portrait' },
       { id: `${id}-landscape`, slot: 'primary-landscape', label: 'Landscape', width: height, height: width, dpr, orientation: 'landscape' },
@@ -11,8 +11,17 @@ function twoViewProfile(id, name, kind, width, height, dpr) {
 export const DEVICE_PROFILES = [
   twoViewProfile('iphone-se', 'iPhone SE', 'phone', 375, 667, 2),
   twoViewProfile('iphone-8-plus', 'iPhone 8 Plus', 'phone', 414, 736, 3),
-  twoViewProfile('iphone-13', 'iPhone 13 / 14', 'phone', 390, 844, 3),
-  twoViewProfile('iphone-15-pro-max', 'iPhone 15 Pro Max', 'phone', 430, 932, 3),
+  twoViewProfile('iphone-13', 'iPhone 13 / 14', 'phone', 390, 844, 3, { cutout: 'notch' }),
+  twoViewProfile('iphone-14-plus', 'iPhone 14 Plus', 'phone', 428, 926, 3, { cutout: 'notch' }),
+  twoViewProfile('iphone-15-pro-max', 'iPhone 15 Pro Max', 'phone', 430, 932, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-16', 'iPhone 16', 'phone', 393, 852, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-16-plus', 'iPhone 16 Plus', 'phone', 430, 932, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-16-pro', 'iPhone 16 Pro', 'phone', 402, 874, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-16-pro-max', 'iPhone 16 Pro Max', 'phone', 440, 956, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-17', 'iPhone 17', 'phone', 402, 874, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-air', 'iPhone Air', 'phone', 420, 912, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-17-pro', 'iPhone 17 Pro', 'phone', 402, 874, 3, { cutout: 'dynamic-island' }),
+  twoViewProfile('iphone-17-pro-max', 'iPhone 17 Pro Max', 'phone', 440, 956, 3, { cutout: 'dynamic-island' }),
   twoViewProfile('galaxy-s8', 'Galaxy S8', 'phone', 360, 740, 3),
   twoViewProfile('galaxy-s20', 'Galaxy S20', 'phone', 360, 800, 3),
   twoViewProfile('pixel-7', 'Pixel 7', 'phone', 412, 915, 2.625),

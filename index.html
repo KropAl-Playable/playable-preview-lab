@@ -44,8 +44,8 @@
         <span class="control-label">Platform</span>
         <div class="segmented" role="group" aria-label="Platform emulation">
           <button id="hostPlatformButton" class="active" title="Use the browser's real navigator/user-agent values">Host</button>
-          <button id="iosPlatformButton" title="Restart runtimes with iOS-like navigator/user-agent values">iOS</button>
-          <button id="androidPlatformButton" title="Restart runtimes with Android-like navigator/user-agent values">Android</button>
+          <button id="iosPlatformButton" title="Apply iOS-like navigator/user-agent values without restarting runtimes">iOS</button>
+          <button id="androidPlatformButton" title="Apply Android-like navigator/user-agent values without restarting runtimes">Android</button>
         </div>
       </div>
 
@@ -66,7 +66,7 @@
     <section class="cta-validator panel" aria-label="CTA URL validator">
       <div class="cta-validator-copy">
         <span class="control-label">CTA URL validator</span>
-        <span class="cta-validator-hint">Enter expected store links. Use iOS / Android emulation to exercise platform-specific CTA branches. Changing platform intentionally restarts the runtimes.</span>
+        <span class="cta-validator-hint">Enter expected store links. Use iOS / Android emulation to exercise platform-specific CTA branches without restarting the playable.</span>
       </div>
 
       <div class="cta-validator-fields">
@@ -115,6 +115,7 @@
       </header>
       <div class="device-shell">
         <div class="device-screen-wrap">
+          <div class="device-cutout" aria-hidden="true"></div>
           <iframe class="device-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups" allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>
           <div class="cta-banner" aria-hidden="true">You have successfully clicked CTA</div>
           <div class="frame-status">Waiting for playable…</div>
