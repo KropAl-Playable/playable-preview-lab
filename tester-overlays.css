@@ -1,0 +1,209 @@
+.tester-control-group { min-width: 0; }
+.tester-control-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tester-segmented { flex-wrap: wrap; }
+.tester-bounds-button { min-height: 36px; padding-inline: 10px; font-size: 11px; }
+.tester-bounds-button.active { background: #2a3447; border-color: #6279ad; color: #e8eeff; }
+
+.tester-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.tester-overlay[data-tester]:not([data-tester="off"]) { display: block; }
+
+.tester-brand,
+.tester-privacy,
+.tester-countdown,
+.tester-close,
+.tester-persistent-cta,
+.tester-sim-label,
+.tester-bound {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.tester-brand {
+  top: calc(12px * var(--scale));
+  left: calc(12px * var(--scale));
+  z-index: 3;
+  min-height: calc(26px * var(--scale));
+  padding: calc(4px * var(--scale)) calc(8px * var(--scale));
+  border-radius: calc(12px * var(--scale));
+  background: #0009;
+  color: #fff;
+  font-size: max(7px, calc(11px * var(--scale)));
+  font-weight: 700;
+  line-height: 1;
+  backdrop-filter: blur(3px);
+}
+.tester-overlay[data-tester="applovin"] .tester-brand::after { content: "AppLovin"; }
+.tester-overlay[data-tester="unity"] .tester-brand::after { content: "Unity Ads"; }
+.tester-overlay[data-tester="liftoff"] .tester-brand::after { content: "Liftoff"; }
+
+.tester-close {
+  top: calc(10px * var(--scale));
+  right: calc(10px * var(--scale));
+  z-index: 4;
+  display: grid;
+  width: calc(38px * var(--scale));
+  height: calc(38px * var(--scale));
+  min-width: 14px;
+  min-height: 14px;
+  place-items: center;
+  border: 1px solid #ffffff66;
+  border-radius: 999px;
+  background: #000b;
+  color: #fff;
+  font-size: max(9px, calc(24px * var(--scale)));
+  font-weight: 400;
+  line-height: 1;
+  box-shadow: 0 1px 6px #0008;
+}
+.tester-overlay[data-tester="applovin"] .tester-close {
+  background: #181818d9;
+  border-color: #ffffff80;
+}
+.tester-overlay[data-tester="unity"] .tester-close {
+  background: #20242ad9;
+  border-color: #ffffff73;
+}
+.tester-overlay[data-tester="liftoff"] .tester-close {
+  background: #f6f6f6e8;
+  border-color: #00000022;
+  color: #202020;
+}
+
+.tester-countdown {
+  top: calc(18px * var(--scale));
+  right: calc(55px * var(--scale));
+  z-index: 3;
+  display: none;
+  color: #fff;
+  font-size: max(7px, calc(11px * var(--scale)));
+  font-weight: 700;
+  text-shadow: 0 1px 3px #000;
+}
+.tester-overlay[data-tester="unity"] .tester-countdown { display: block; }
+.tester-overlay[data-tester="unity"] .tester-countdown::after { content: "Ad"; }
+
+.tester-privacy {
+  left: calc(12px * var(--scale));
+  bottom: calc(12px * var(--scale));
+  z-index: 3;
+  display: none;
+  width: calc(24px * var(--scale));
+  height: calc(24px * var(--scale));
+  min-width: 10px;
+  min-height: 10px;
+  place-items: center;
+  border-radius: 999px;
+  background: #ffffffdf;
+  color: #222;
+  font-family: Georgia, serif;
+  font-size: max(7px, calc(12px * var(--scale)));
+  font-weight: 700;
+  box-shadow: 0 1px 5px #0006;
+}
+.tester-overlay[data-tester="liftoff"] .tester-privacy { display: grid; }
+
+.tester-persistent-cta {
+  left: 50%;
+  bottom: calc(12px * var(--scale));
+  z-index: 3;
+  display: none;
+  min-width: calc(110px * var(--scale));
+  padding: calc(8px * var(--scale)) calc(16px * var(--scale));
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #ffffffeb;
+  color: #171717;
+  font-size: max(7px, calc(12px * var(--scale)));
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 2px 10px #0005;
+}
+.tester-overlay[data-tester="liftoff"] .tester-persistent-cta { display: block; }
+
+.tester-sim-label {
+  right: calc(8px * var(--scale));
+  bottom: calc(8px * var(--scale));
+  z-index: 5;
+  padding: calc(3px * var(--scale)) calc(5px * var(--scale));
+  border-radius: calc(4px * var(--scale));
+  background: #0008;
+  color: #ffffff99;
+  font-size: max(6px, calc(8px * var(--scale)));
+  line-height: 1;
+}
+.tester-overlay[data-tester="liftoff"] .tester-sim-label { bottom: calc(48px * var(--scale)); }
+
+.tester-bound { display: none; z-index: 2; border: 1px dashed #ffcc66; background: #ffcc6618; }
+.tester-overlay.show-bounds .tester-bound { display: block; }
+.tester-bound span {
+  position: absolute;
+  left: calc(4px * var(--scale));
+  top: calc(4px * var(--scale));
+  padding: calc(2px * var(--scale)) calc(4px * var(--scale));
+  border-radius: calc(3px * var(--scale));
+  background: #1c160ddd;
+  color: #ffe5a6;
+  font-size: max(6px, calc(8px * var(--scale)));
+  line-height: 1;
+  white-space: nowrap;
+}
+.tester-bound-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(58px * var(--scale));
+}
+.tester-bound-close {
+  top: calc(4px * var(--scale));
+  right: calc(4px * var(--scale));
+  width: calc(52px * var(--scale));
+  height: calc(52px * var(--scale));
+  border-color: #ff6b78;
+  background: #ff6b781c;
+}
+.tester-bound-close span {
+  left: auto;
+  right: calc(2px * var(--scale));
+  top: auto;
+  bottom: calc(2px * var(--scale));
+  color: #ffd8dc;
+  background: #2d1115dd;
+}
+.tester-bound-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(54px * var(--scale));
+}
+.tester-overlay[data-tester="applovin"] .tester-bound-bottom,
+.tester-overlay[data-tester="unity"] .tester-bound-bottom { display: none; }
+.tester-overlay[data-tester="applovin"].show-bounds .tester-bound-bottom,
+.tester-overlay[data-tester="unity"].show-bounds .tester-bound-bottom { display: none; }
+
+.device-shell[data-orientation="landscape"] .tester-brand {
+  top: calc(10px * var(--scale));
+  left: calc(10px * var(--scale));
+}
+.device-shell[data-orientation="landscape"] .tester-close {
+  top: calc(8px * var(--scale));
+  right: calc(8px * var(--scale));
+}
+.device-shell[data-orientation="landscape"] .tester-bound-top {
+  height: calc(52px * var(--scale));
+}
+
+@media (max-width: 760px) {
+  .tester-control-row { align-items: stretch; }
+  .tester-control-group { flex: 1 1 100%; }
+  .tester-segmented { flex: 1 1 auto; }
+  .tester-segmented button { flex: 1 1 auto; }
+}
