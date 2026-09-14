@@ -35,6 +35,7 @@ const state = {
 };
 
 const frameSafeState = new WeakMap();
+const frameNudgeState = new WeakMap();
 
 function buildControls() {
   const controls = document.querySelector('.controls');
@@ -171,7 +172,29 @@ function installPreviewSafeAreaApi(win, safeArea) {
   } catch (_) {}
 }
 
-function refreshRuntimeSafeArea(frame, win, doc, nudgeViewport) {
+function nudgeFrameViewport(frame) {
+  if (!frame) return;
+
+  const active = frameNudgeState.get(frame);
+  if (active) {
+    try { cancelAnimationFrame(active.raf); } catch (_) {}
+    frame.style.width = active.originalWidth;
+    frameNudgeState.delete(frame);
+  }
+
+  const originalWidth = frame.style.width;
+  const width = Number.parseFloat(originalWidth);
+  if (!Number.isFinite(width) || width <= 2) return;
+
+  frame.style.width = `${width - 1}px`;
+  const raf = requestAnimationFrame(() => {
+    frame.style.width = originalWidth;
+    frameNudgeState.delete(frame);
+  });
+  frameNudgeState.set(frame, { originalWidth, raf });
+}
+
+function refreshRuntimeSafeArea(frame, win, doc) {
   try {
     win.dispatchEvent(new win.CustomEvent('cgbpreviewsafeareachange', {
       detail: win.__CGB_PREVIEW_SAFE_AREA__,
@@ -181,19 +204,11 @@ function refreshRuntimeSafeArea(frame, win, doc, nudgeViewport) {
   // Generic HTML integrations often update their layout directly from resize.
   try { win.dispatchEvent(new win.Event('resize')); } catch (_) {}
 
-  // Cocos Creator 3.8.x emits its internal `window-resize` signal only when
-  // GameDiv/container geometry really changes. A 1px iframe nudge forces that
-  // signal without restarting the runtime, then immediately restores the viewport.
-  if (!nudgeViewport || !doc.getElementById('GameDiv')) return;
-
-  const originalWidth = frame.style.width;
-  const width = Number.parseFloat(originalWidth);
-  if (!Number.isFinite(width) || width <= 2) return;
-
-  frame.style.width = `${width - 1}px`;
-  requestAnimationFrame(() => {
-    frame.style.width = originalWidth;
-  });
+  // Cocos Creator 3.8.x reads --safe-* through its screen adapter, but its
+  // SafeArea component refreshes from the engine's internal window-resize event.
+  // Force one real viewport-size transition whenever SafeArea is applied,
+  // including the first loaded document and an explicit Off (all zeroes).
+  if (doc.getElementById('GameDiv')) nudgeFrameViewport(frame);
 }
 
 function applySafeAreaToFrame(frame, safeArea, tester) {
@@ -213,6 +228,10 @@ function applySafeAreaToFrame(frame, safeArea, tester) {
   const previous = frameSafeState.get(frame);
   if (previous?.doc === doc && previous.signature === signature) {
     installPreviewSafeAreaApi(win, safeArea);
+    // Re-apply the runtime refresh even when the values did not change. This is
+    // required for initial Off: the HTML document may have initialized Cocos
+    // before our post-load zero SafeArea was observed by cc.SafeArea.
+    refreshRuntimeSafeArea(frame, win, doc);
     return;
   }
 
@@ -251,7 +270,7 @@ function applySafeAreaToFrame(frame, safeArea, tester) {
   }
 
   frameSafeState.set(frame, { doc, signature });
-  refreshRuntimeSafeArea(frame, win, doc, Boolean(previous && previous.doc === doc));
+  refreshRuntimeSafeArea(frame, win, doc);
 }
 
 function applyToScreen(screenWrap) {
