@@ -36,6 +36,9 @@ const state = {
 
 const frameSafeState = new WeakMap();
 const frameNudgeState = new WeakMap();
+const frameRuntimeRefreshState = new WeakMap();
+const RUNTIME_REFRESH_POLL_MS = 100;
+const RUNTIME_REFRESH_TIMEOUT_MS = 10000;
 
 function buildControls() {
   const controls = document.querySelector('.controls');
@@ -194,7 +197,66 @@ function nudgeFrameViewport(frame) {
   frameNudgeState.set(frame, { originalWidth, raf });
 }
 
-function refreshRuntimeSafeArea(frame, win, doc) {
+function cocosRuntimeReady(doc) {
+  const gameDiv = doc?.getElementById('GameDiv');
+  if (!gameDiv) return false;
+
+  // GameDiv exists in a stock Cocos HTML before the engine starts. Cocos' web
+  // screen adapter writes concrete inline width/height only after it has been
+  // initialized and registered its resize listeners.
+  const width = Number.parseFloat(gameDiv.style.width);
+  const height = Number.parseFloat(gameDiv.style.height);
+  return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+}
+
+function cancelRuntimeRefresh(frame) {
+  const pending = frameRuntimeRefreshState.get(frame);
+  if (!pending) return;
+  if (pending.timer) clearTimeout(pending.timer);
+  frameRuntimeRefreshState.delete(frame);
+}
+
+function scheduleCocosRuntimeRefresh(frame, doc, signature) {
+  if (!frame || !doc?.getElementById('GameDiv')) return;
+
+  const safeState = frameSafeState.get(frame);
+  if (safeState?.doc === doc && safeState.runtimeSignature === signature) return;
+
+  const pending = frameRuntimeRefreshState.get(frame);
+  if (pending?.doc === doc && pending.signature === signature) return;
+  cancelRuntimeRefresh(frame);
+
+  const startedAt = performance.now();
+  const attempt = () => {
+    let currentDoc;
+    try { currentDoc = frame.contentDocument; } catch (_) { return; }
+    const currentSafeState = frameSafeState.get(frame);
+    if (currentDoc !== doc || currentSafeState?.doc !== doc || currentSafeState.signature !== signature) {
+      cancelRuntimeRefresh(frame);
+      return;
+    }
+
+    if (cocosRuntimeReady(doc)) {
+      nudgeFrameViewport(frame);
+      currentSafeState.runtimeSignature = signature;
+      cancelRuntimeRefresh(frame);
+      return;
+    }
+
+    if (performance.now() - startedAt >= RUNTIME_REFRESH_TIMEOUT_MS) {
+      cancelRuntimeRefresh(frame);
+      return;
+    }
+
+    const next = setTimeout(attempt, RUNTIME_REFRESH_POLL_MS);
+    frameRuntimeRefreshState.set(frame, { doc, signature, timer: next });
+  };
+
+  const timer = setTimeout(attempt, 0);
+  frameRuntimeRefreshState.set(frame, { doc, signature, timer });
+}
+
+function refreshRuntimeSafeArea(frame, win, doc, signature) {
   try {
     win.dispatchEvent(new win.CustomEvent('cgbpreviewsafeareachange', {
       detail: win.__CGB_PREVIEW_SAFE_AREA__,
@@ -204,11 +266,11 @@ function refreshRuntimeSafeArea(frame, win, doc) {
   // Generic HTML integrations often update their layout directly from resize.
   try { win.dispatchEvent(new win.Event('resize')); } catch (_) {}
 
-  // Cocos Creator 3.8.x reads --safe-* through its screen adapter, but its
-  // SafeArea component refreshes from the engine's internal window-resize event.
-  // Force one real viewport-size transition whenever SafeArea is applied,
-  // including the first loaded document and an explicit Off (all zeroes).
-  if (doc.getElementById('GameDiv')) nudgeFrameViewport(frame);
+  // Do not use mere GameDiv existence as a Cocos-ready signal: stock Cocos HTML
+  // contains GameDiv before the async packer has unpacked resources or booted the
+  // engine. Wait until the screen adapter has initialized GameDiv, then force one
+  // real iframe viewport transition so Cocos emits its internal window-resize.
+  scheduleCocosRuntimeRefresh(frame, doc, signature);
 }
 
 function applySafeAreaToFrame(frame, safeArea, tester) {
@@ -228,12 +290,11 @@ function applySafeAreaToFrame(frame, safeArea, tester) {
   const previous = frameSafeState.get(frame);
   if (previous?.doc === doc && previous.signature === signature) {
     installPreviewSafeAreaApi(win, safeArea);
-    // Re-apply the runtime refresh even when the values did not change. This is
-    // required for initial Off: the HTML document may have initialized Cocos
-    // before our post-load zero SafeArea was observed by cc.SafeArea.
-    refreshRuntimeSafeArea(frame, win, doc);
+    refreshRuntimeSafeArea(frame, win, doc, signature);
     return;
   }
+
+  if (previous?.doc !== doc) cancelRuntimeRefresh(frame);
 
   const root = doc.documentElement;
   const cssValues = {
@@ -269,8 +330,8 @@ function applySafeAreaToFrame(frame, safeArea, tester) {
     try { win.__CGB_PREVIEW_SAFE_AREA__ = snapshot; } catch (_) {}
   }
 
-  frameSafeState.set(frame, { doc, signature });
-  refreshRuntimeSafeArea(frame, win, doc);
+  frameSafeState.set(frame, { doc, signature, runtimeSignature: null });
+  refreshRuntimeSafeArea(frame, win, doc, signature);
 }
 
 function applyToScreen(screenWrap) {
