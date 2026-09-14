@@ -11,6 +11,10 @@
   display: none;
   overflow: hidden;
   pointer-events: none;
+  --tester-safe-top: 0px;
+  --tester-safe-right: 0px;
+  --tester-safe-bottom: 0px;
+  --tester-safe-left: 0px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .tester-overlay[data-tester]:not([data-tester="off"]) { display: block; }
@@ -21,32 +25,18 @@
 .tester-close,
 .tester-persistent-cta,
 .tester-sim-label,
+.tester-safe-rect,
 .tester-bound {
   position: absolute;
   box-sizing: border-box;
 }
 
-.tester-brand {
-  top: calc(12px * var(--scale));
-  left: calc(12px * var(--scale));
-  z-index: 3;
-  min-height: calc(26px * var(--scale));
-  padding: calc(4px * var(--scale)) calc(8px * var(--scale));
-  border-radius: calc(12px * var(--scale));
-  background: #0009;
-  color: #fff;
-  font-size: max(7px, calc(11px * var(--scale)));
-  font-weight: 700;
-  line-height: 1;
-  backdrop-filter: blur(3px);
-}
-.tester-overlay[data-tester="applovin"] .tester-brand::after { content: "AppLovin"; }
-.tester-overlay[data-tester="unity"] .tester-brand::after { content: "Unity Ads"; }
-.tester-overlay[data-tester="liftoff"] .tester-brand::after { content: "Liftoff"; }
+/* Network chrome: keep this deliberately minimal. The real SDK owns these controls. */
+.tester-brand { display: none; }
 
 .tester-close {
-  top: calc(10px * var(--scale));
-  right: calc(10px * var(--scale));
+  top: calc(9px * var(--scale));
+  right: calc(9px * var(--scale));
   z-index: 4;
   display: grid;
   width: calc(38px * var(--scale));
@@ -54,95 +44,121 @@
   min-width: 14px;
   min-height: 14px;
   place-items: center;
-  border: 1px solid #ffffff66;
+  border: 1px solid #ffffff73;
   border-radius: 999px;
-  background: #000b;
+  background: #141414d9;
   color: #fff;
   font-size: max(9px, calc(24px * var(--scale)));
   font-weight: 400;
   line-height: 1;
   box-shadow: 0 1px 6px #0008;
-}
-.tester-overlay[data-tester="applovin"] .tester-close {
-  background: #181818d9;
-  border-color: #ffffff80;
+  backdrop-filter: blur(2px);
 }
 .tester-overlay[data-tester="unity"] .tester-close {
-  background: #20242ad9;
+  background: #20242ae6;
   border-color: #ffffff73;
 }
 .tester-overlay[data-tester="liftoff"] .tester-close {
-  background: #f6f6f6e8;
-  border-color: #00000022;
+  background: #f6f6f6ed;
+  border-color: #0000002b;
   color: #202020;
+  box-shadow: 0 1px 5px #0005;
 }
 
-.tester-countdown {
-  top: calc(18px * var(--scale));
-  right: calc(55px * var(--scale));
-  z-index: 3;
-  display: none;
-  color: #fff;
-  font-size: max(7px, calc(11px * var(--scale)));
-  font-weight: 700;
-  text-shadow: 0 1px 3px #000;
-}
-.tester-overlay[data-tester="unity"] .tester-countdown { display: block; }
-.tester-overlay[data-tester="unity"] .tester-countdown::after { content: "Ad"; }
+.tester-countdown { display: none; }
 
+/* AppLovin documents an SDK-owned information control in the bottom-left.
+   Unity/Liftoff can also display privacy/regulatory controls in that area. */
 .tester-privacy {
-  left: calc(12px * var(--scale));
-  bottom: calc(12px * var(--scale));
-  z-index: 3;
+  left: calc(9px * var(--scale));
+  bottom: calc(9px * var(--scale));
+  z-index: 4;
   display: none;
   width: calc(24px * var(--scale));
   height: calc(24px * var(--scale));
   min-width: 10px;
   min-height: 10px;
   place-items: center;
+  border: 1px solid #00000020;
   border-radius: 999px;
-  background: #ffffffdf;
-  color: #222;
-  font-family: Georgia, serif;
-  font-size: max(7px, calc(12px * var(--scale)));
+  background: #fffffff0;
+  color: #202020;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: max(7px, calc(13px * var(--scale)));
   font-weight: 700;
+  font-style: italic;
+  line-height: 1;
   box-shadow: 0 1px 5px #0006;
 }
+.tester-overlay[data-tester="applovin"] .tester-privacy,
+.tester-overlay[data-tester="unity"] .tester-privacy,
 .tester-overlay[data-tester="liftoff"] .tester-privacy { display: grid; }
-
-.tester-persistent-cta {
-  left: 50%;
-  bottom: calc(12px * var(--scale));
-  z-index: 3;
-  display: none;
-  min-width: calc(110px * var(--scale));
-  padding: calc(8px * var(--scale)) calc(16px * var(--scale));
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: #ffffffeb;
-  color: #171717;
-  font-size: max(7px, calc(12px * var(--scale)));
-  font-weight: 800;
-  line-height: 1;
-  text-align: center;
-  box-shadow: 0 2px 10px #0005;
+.tester-overlay[data-tester="unity"] .tester-privacy {
+  background: #20242ae6;
+  border-color: #ffffff73;
+  color: #fff;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-style: normal;
 }
-.tester-overlay[data-tester="liftoff"] .tester-persistent-cta { display: block; }
+.tester-overlay[data-tester="liftoff"] .tester-privacy {
+  width: calc(22px * var(--scale));
+  height: calc(22px * var(--scale));
+  background: #ffffffdf;
+}
+
+/* A persistent CTA is creative-dependent, not guaranteed host chrome. */
+.tester-persistent-cta { display: none; }
 
 .tester-sim-label {
-  right: calc(8px * var(--scale));
-  bottom: calc(8px * var(--scale));
-  z-index: 5;
+  right: calc(7px * var(--scale));
+  bottom: calc(7px * var(--scale));
+  z-index: 6;
   padding: calc(3px * var(--scale)) calc(5px * var(--scale));
   border-radius: calc(4px * var(--scale));
-  background: #0008;
-  color: #ffffff99;
+  background: #0009;
+  color: #ffffff9e;
   font-size: max(6px, calc(8px * var(--scale)));
   line-height: 1;
 }
-.tester-overlay[data-tester="liftoff"] .tester-sim-label { bottom: calc(48px * var(--scale)); }
+.tester-overlay[data-tester="applovin"] .tester-sim-label,
+.tester-overlay[data-tester="unity"] .tester-sim-label,
+.tester-overlay[data-tester="liftoff"] .tester-sim-label {
+  bottom: calc(39px * var(--scale));
+}
 
-.tester-bound { display: none; z-index: 2; border: 1px dashed #ffcc66; background: #ffcc6618; }
+/* The cyan rectangle is the actual rectangular SafeArea injected into the HTML.
+   It includes both physical-device insets and the selected network exclusion area. */
+.tester-safe-rect {
+  z-index: 5;
+  display: none;
+  top: calc(var(--tester-safe-top) * var(--scale));
+  right: calc(var(--tester-safe-right) * var(--scale));
+  bottom: calc(var(--tester-safe-bottom) * var(--scale));
+  left: calc(var(--tester-safe-left) * var(--scale));
+  border: 1px solid #59ddff;
+  border-radius: calc(4px * var(--scale));
+  box-shadow: inset 0 0 0 1px #00151c99;
+}
+.tester-overlay.show-bounds .tester-safe-rect { display: block; }
+.tester-safe-rect span {
+  position: absolute;
+  left: calc(4px * var(--scale));
+  bottom: calc(4px * var(--scale));
+  padding: calc(2px * var(--scale)) calc(4px * var(--scale));
+  border-radius: calc(3px * var(--scale));
+  background: #062631e8;
+  color: #b8f3ff;
+  font-size: max(6px, calc(8px * var(--scale)));
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tester-bound {
+  z-index: 2;
+  display: none;
+  border: 1px dashed #ffcc66;
+  background: #ffcc6618;
+}
 .tester-overlay.show-bounds .tester-bound { display: block; }
 .tester-bound span {
   position: absolute;
@@ -156,17 +172,25 @@
   line-height: 1;
   white-space: nowrap;
 }
+
+/* Generic SDK-owned top/bottom chrome approximation for AppLovin and Unity. */
 .tester-bound-top {
   top: 0;
   left: 0;
   right: 0;
-  height: calc(58px * var(--scale));
+  height: calc(54px * var(--scale));
+}
+.tester-bound-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(36px * var(--scale));
 }
 .tester-bound-close {
   top: calc(4px * var(--scale));
   right: calc(4px * var(--scale));
-  width: calc(52px * var(--scale));
-  height: calc(52px * var(--scale));
+  width: calc(50px * var(--scale));
+  height: calc(50px * var(--scale));
   border-color: #ff6b78;
   background: #ff6b781c;
 }
@@ -178,27 +202,70 @@
   color: #ffd8dc;
   background: #2d1115dd;
 }
-.tester-bound-bottom {
+.tester-bound-top-left,
+.tester-bound-bottom-left,
+.tester-bound-bottom-right { display: none; }
+
+/* AppLovin's lower-left information icon is host UI; expose its local exclusion too. */
+.tester-overlay[data-tester="applovin"] .tester-bound-bottom-left {
+  left: calc(4px * var(--scale));
+  bottom: calc(4px * var(--scale));
+  width: calc(38px * var(--scale));
+  height: calc(38px * var(--scale));
+  border-color: #ff6b78;
+  background: #ff6b781c;
+}
+
+/* Liftoff publishes corner occlusion guidance instead of a full-width strip:
+   both top corners can consume 50x50, with small regulatory marks possible below. */
+.tester-overlay[data-tester="liftoff"] .tester-bound-top,
+.tester-overlay[data-tester="liftoff"] .tester-bound-bottom { display: none; }
+.tester-overlay[data-tester="liftoff"].show-bounds .tester-bound-top-left,
+.tester-overlay[data-tester="liftoff"].show-bounds .tester-bound-bottom-left,
+.tester-overlay[data-tester="liftoff"].show-bounds .tester-bound-bottom-right { display: block; }
+.tester-overlay[data-tester="liftoff"] .tester-bound-top-left {
+  top: 0;
   left: 0;
+  width: calc(50px * var(--scale));
+  height: calc(50px * var(--scale));
+}
+.tester-overlay[data-tester="liftoff"] .tester-bound-close {
+  top: 0;
+  right: 0;
+  width: calc(50px * var(--scale));
+  height: calc(50px * var(--scale));
+}
+.tester-overlay[data-tester="liftoff"] .tester-bound-bottom-left {
+  left: 0;
+  bottom: 0;
+  width: calc(40px * var(--scale));
+  height: calc(25px * var(--scale));
+}
+.tester-overlay[data-tester="liftoff"] .tester-bound-bottom-right {
   right: 0;
   bottom: 0;
-  height: calc(54px * var(--scale));
+  width: calc(40px * var(--scale));
+  height: calc(25px * var(--scale));
 }
-.tester-overlay[data-tester="applovin"] .tester-bound-bottom,
-.tester-overlay[data-tester="unity"] .tester-bound-bottom { display: none; }
-.tester-overlay[data-tester="applovin"].show-bounds .tester-bound-bottom,
-.tester-overlay[data-tester="unity"].show-bounds .tester-bound-bottom { display: none; }
+.tester-overlay[data-tester="liftoff"] .tester-bound-top-left span {
+  left: calc(2px * var(--scale));
+  top: auto;
+  bottom: calc(2px * var(--scale));
+}
 
-.device-shell[data-orientation="landscape"] .tester-brand {
-  top: calc(10px * var(--scale));
-  left: calc(10px * var(--scale));
-}
 .device-shell[data-orientation="landscape"] .tester-close {
-  top: calc(8px * var(--scale));
-  right: calc(8px * var(--scale));
+  top: calc(7px * var(--scale));
+  right: calc(7px * var(--scale));
+}
+.device-shell[data-orientation="landscape"] .tester-privacy {
+  left: calc(7px * var(--scale));
+  bottom: calc(7px * var(--scale));
 }
 .device-shell[data-orientation="landscape"] .tester-bound-top {
-  height: calc(52px * var(--scale));
+  height: calc(50px * var(--scale));
+}
+.device-shell[data-orientation="landscape"] .tester-bound-bottom {
+  height: calc(28px * var(--scale));
 }
 
 @media (max-width: 760px) {
