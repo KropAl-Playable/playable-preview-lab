@@ -259,14 +259,17 @@ function applyToScreen(screenWrap) {
   const overlay = screenWrap.querySelector(':scope > .tester-overlay');
   const frame = screenWrap.querySelector(':scope > .device-frame');
   const orientation = orientationFor(screenWrap);
-  const safeArea = mergeInsets(
-    deviceSafeArea(screenWrap, orientation),
-    networkSafeArea(state.tester, orientation),
-  );
+  const testerEnabled = state.tester !== 'off';
+  const safeArea = testerEnabled
+    ? mergeInsets(
+      deviceSafeArea(screenWrap, orientation),
+      networkSafeArea(state.tester, orientation),
+    )
+    : ZERO_INSETS;
 
   overlay.dataset.tester = state.tester;
   overlay.dataset.orientation = orientation;
-  overlay.classList.toggle('show-bounds', state.showBounds && state.tester !== 'off');
+  overlay.classList.toggle('show-bounds', state.showBounds && testerEnabled);
   overlay.style.setProperty('--tester-safe-top', `${safeArea.top}px`);
   overlay.style.setProperty('--tester-safe-right', `${safeArea.right}px`);
   overlay.style.setProperty('--tester-safe-bottom', `${safeArea.bottom}px`);
@@ -277,7 +280,8 @@ function applyToScreen(screenWrap) {
     frame.addEventListener('load', () => setTimeout(() => applyToScreen(screenWrap), 0));
   }
 
-  // Device cutout/home-indicator safe area is still applied when Tester overlay is Off.
+  // Tester SafeArea is live: switching networks updates it in-place, and Off
+  // explicitly restores all injected insets to zero without reloading the iframe.
   applySafeAreaToFrame(frame, safeArea, state.tester);
 }
 
